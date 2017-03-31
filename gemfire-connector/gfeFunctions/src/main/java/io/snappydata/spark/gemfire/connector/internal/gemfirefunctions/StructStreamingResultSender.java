@@ -30,7 +30,6 @@ import com.gemstone.gemfire.internal.cache.CachedDeserializable;
 import com.gemstone.gemfire.internal.logging.LogService;
 import io.snappydata.spark.gemfire.connector.internal.gemfirefunctions.shared.StructStreamingResult;
 import org.apache.logging.log4j.Logger;
-
 /**
  * StructStreamingResultSender and StructStreamingResultCollector  are paired
  * to transfer result of list of `com.gemstone.gemfire.cache.query.Struct`
