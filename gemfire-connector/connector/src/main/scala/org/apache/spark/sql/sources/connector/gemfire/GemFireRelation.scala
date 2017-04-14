@@ -117,21 +117,27 @@ object GemFireRelation {
     // BeanInfo is not serializable so we must rediscover it remotely for each partition.
     val localBeanInfo = Introspector.getBeanInfo(clazz)
 
-    val extractorsValue = localBeanInfo.getPropertyDescriptors.
-        filterNot(_.getName == "class").map(_.getReadMethod)
-    val methodsToConvertsValue = extractorsValue.zip(attributeSeq).map { case (e, attr) =>
-      (e, CatalystTypeConverters.createToCatalystConverter(attr.dataType))
-    }
 
-    val extractorsKey = localBeanInfo.getPropertyDescriptors.
+    val extractors = localBeanInfo.getPropertyDescriptors.
         filterNot(_.getName == "class").map(_.getReadMethod)
-    val methodsToConvertsKey = extractorsKey.zip(attributeSeq).map { case (e, attr) =>
-      (e, CatalystTypeConverters.createToCatalystConverter(attr.dataType))
+    val methodsToConvert = extractors.zip(attributeSeq).map { case (e, attr) =>
+      attr.dataType match {
+        case strct: StructType => {
+          val (length, cnvrtr) = getLengthAndExtractorForBeanClass(e.getReturnType, 0)
+          val arr = Array.ofDim[Any](length)
+          (e, (x: Any) => {
+             cnvrtr(x, arr)
+             new GenericRow(arr)
+          })
+        }
+        case _ => (e, CatalystTypeConverters.createToCatalystConverter(attr.dataType))
+      }
+
     }
     val length = attributeSeq.size
     var index = startIndex
     (length, (e: Any, array: Array[Any]) => {
-      methodsToConvertsKey.foreach {
+      methodsToConvert.foreach {
         case (m, convert) => {
           array(index) = convert(m.invoke(e))
           index += 1
