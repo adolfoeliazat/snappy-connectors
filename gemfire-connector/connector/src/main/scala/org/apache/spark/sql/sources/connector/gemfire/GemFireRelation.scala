@@ -26,9 +26,10 @@ case class GemFireRelation(@transient override val sqlContext: SnappyContext, re
     keyConstraint: Option[String], valueConstraint: Option[String])
     extends BaseRelation with TableScan {
 
-  private val keyTag = ClassTag[Any](MainUtils.classForName(keyConstraint.getOrElse("scala.Any")))
-  private val valueTag = ClassTag[Any](MainUtils.classForName(valueConstraint.
-      getOrElse("scala.Any")))
+  private val keyTag = ClassTag[Any](keyConstraint.map(MainUtils.classForName(_)).
+      getOrElse(classOf[Any]))
+  private val valueTag = ClassTag[Any](valueConstraint.map(MainUtils.classForName(_)).
+      getOrElse(classOf[Any]))
 
   override def buildScan(): RDD[Row] = {
     val rdd = GemFireRegionRDD(sqlContext.sparkContext, regionPath,
