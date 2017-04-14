@@ -14,7 +14,7 @@ import io.snappydata.spark.gemfire.connector.internal.rdd.GemFireRegionRDD
 import org.apache.spark.rdd.RDD
 import org.apache.spark.sql.catalyst.expressions.{AttributeReference, GenericRow}
 import org.apache.spark.sql.catalyst.{CatalystTypeConverters, JavaTypeInference}
-import org.apache.spark.sql.collection.{Utils, Utils => OtherUtils}
+import org.apache.spark.sql.collection.{Utils => OtherUtils}
 import org.apache.spark.sql.execution.columnar.ExternalStoreUtils.CaseInsensitiveMutableHashMap
 import org.apache.spark.sql.sources._
 import org.apache.spark.sql.types._
@@ -26,8 +26,9 @@ case class GemFireRelation(@transient override val sqlContext: SnappyContext, re
     keyConstraint: Option[String], valueConstraint: Option[String])
     extends BaseRelation with TableScan {
 
-  private val keyTag = ClassTag[Any](Utils.classForName(keyConstraint.getOrElse("scala.Any")))
-  private val valueTag = ClassTag[Any](Utils.classForName(valueConstraint.getOrElse("scala.Any")))
+  private val keyTag = ClassTag[Any](MainUtils.classForName(keyConstraint.getOrElse("scala.Any")))
+  private val valueTag = ClassTag[Any](MainUtils.classForName(valueConstraint.
+      getOrElse("scala.Any")))
 
   override def buildScan(): RDD[Row] = {
     val rdd = GemFireRegionRDD(sqlContext.sparkContext, regionPath,
