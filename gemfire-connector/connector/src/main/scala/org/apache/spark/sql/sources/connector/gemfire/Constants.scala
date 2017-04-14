@@ -6,7 +6,10 @@ package org.apache.spark.sql.sources.connector.gemfire
 
 object Constants {
   val REGION_PATH: String = "regionPath"
-  val PRIMARY_KEY_COLUMN_NAME: String = "primaryKeyColumn"
-  val keyConstraintClass = "keyConstraintClass"
-  val valueConstraintClass = "valueConstraintClass"
+  val PRIMARY_KEY_COLUMN_NAME: String = "primaryKeyColumnName"
+  val VALUE_COLUMN_NAME: String = "valueColumnName"
+  val keyConstraintClass = "keyClass"
+  val valueConstraintClass = "valueClass"
+  val defaultKeyColumnName = "KeyColumn"
+  val defaultValueColumnName = "ValueColumn"
 }

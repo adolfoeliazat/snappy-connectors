@@ -6,28 +6,25 @@
 package org.apache.spark.sql.sources.connector.gemfire
 
 import java.beans.Introspector
-import java.math.BigInteger
 
 import scala.reflect.ClassTag
 
-import com.google.common.reflect.TypeToken
 import io.snappydata.spark.gemfire.connector.internal.rdd.GemFireRegionRDD
 
-import org.apache.spark.sql.collection.{Utils => OtherUtils}
 import org.apache.spark.rdd.RDD
-import org.apache.spark.sql.catalyst.{CatalystTypeConverters, InternalRow, JavaTypeInference}
-import org.apache.spark.sql.catalyst.expressions.{AttributeReference, GenericInternalRow, GenericRow}
-import org.apache.spark.sql.collection.Utils
-import org.apache.spark.sql.{SQLContext, SaveMode, SnappyContext, _}
-import org.apache.spark.sql.execution.columnar.ExternalStoreUtils
+import org.apache.spark.sql.catalyst.expressions.{AttributeReference, GenericRow}
+import org.apache.spark.sql.catalyst.{CatalystTypeConverters, JavaTypeInference}
+import org.apache.spark.sql.collection.{Utils, Utils => OtherUtils}
 import org.apache.spark.sql.execution.columnar.ExternalStoreUtils.CaseInsensitiveMutableHashMap
 import org.apache.spark.sql.sources._
 import org.apache.spark.sql.types._
+import org.apache.spark.sql.{SQLContext, SaveMode, SnappyContext, _}
 import org.apache.spark.util.{Utils => MainUtils}
 
-case class GemFireRelation( @transient override val sqlContext: SnappyContext, regionPath: String,
-    primaryKeyColumnName: Option[String], keyConstraint: Option[String],
-    valueConstraint: Option[String] ) extends BaseRelation with TableScan {
+case class GemFireRelation(@transient override val sqlContext: SnappyContext, regionPath: String,
+    primaryKeyColumnName: Option[String], valueColumnName: Option[String],
+    keyConstraint: Option[String], valueConstraint: Option[String])
+    extends BaseRelation with TableScan {
 
   private val keyTag = ClassTag[Any](Utils.classForName(keyConstraint.getOrElse("scala.Any")))
   private val valueTag = ClassTag[Any](Utils.classForName(valueConstraint.getOrElse("scala.Any")))
@@ -35,10 +32,10 @@ case class GemFireRelation( @transient override val sqlContext: SnappyContext, r
   override def buildScan(): RDD[Row] = {
     val rdd = GemFireRegionRDD(sqlContext.sparkContext, regionPath,
       Map.empty[String, String])(keyTag, valueTag)
-    rdd.mapPartitions (iter => {
-      val keyClass = MainUtils.classForName(keyConstraint.getOrElse("scala.Any"))
-      val valueClass = MainUtils.classForName(valueConstraint.getOrElse("scala.Any"))
-      val(totalSize, keyConverter, valueConverter) = GemFireRelation.getLengthAndConverters(
+    rdd.mapPartitions(iter => {
+      val keyClass = keyConstraint.map(MainUtils.classForName(_))
+      val valueClass = valueConstraint.map(MainUtils.classForName(_))
+      val (totalSize, keyConverter, valueConverter) = GemFireRelation.getLengthAndConverters(
         keyClass, valueClass)
       iter.map { case (k, v) => {
         val array = Array.ofDim[Any](totalSize)
@@ -57,11 +54,13 @@ case class GemFireRelation( @transient override val sqlContext: SnappyContext, r
 
     val keyStructFields = inferedKeyType match {
       case x: StructType => x.fields
-      case _ => Array(StructField("KeyColumn", inferedKeyType, nullableKey))
+      case _ => Array(StructField(primaryKeyColumnName.getOrElse(Constants.defaultKeyColumnName),
+        inferedKeyType, nullableKey))
     }
     val valueStructFields = inferedValType match {
       case x: StructType => x.fields
-      case _ => Array(StructField("KeyColumn", inferedValType, nullableValue))
+      case _ => Array(StructField(valueColumnName.getOrElse(Constants.defaultValueColumnName),
+        inferedValType, nullableValue))
     }
     StructType(keyStructFields ++ valueStructFields)
 
@@ -77,27 +76,33 @@ object GemFireRelation {
     }
   }
 
-  private def getLengthAndConverters(keyClass: Class[_], valueClass: Class[_]):
+  private def getLengthAndConverters(keyClass: Option[Class[_]], valueClass: Option[Class[_]]):
   (Int, (Any, Array[Any]) => Unit, (Any, Array[Any]) => Unit) = {
-    val keyType = inferDataType(keyClass)
-    val valType = inferDataType(valueClass)
-    val (keyLength, keyConverter) = if (keyType.isDefined) {
-      (1, (e: Any, array: Array[Any]) => {
-        array(0) = e
-      })
-    } else {
-      getLengthAndExtractorForBeanClass(keyClass, 0)
-    }
 
-    val (valueLength, valueConverter) = if (valType.isDefined) {
-      (1, (e: Any, array: Array[Any]) => {
-        array(keyLength) = e
-      })
-    } else {
-      getLengthAndExtractorForBeanClass(valueClass, keyLength)
-    }
-    (keyLength + valueLength, keyConverter, valueConverter )
+    val (keyLength, keyConverter) = keyClass.map(className => {
+      val keyType = inferDataType(className)
+      if (keyType.isDefined) {
+        (1, (e: Any, array: Array[Any]) => {
+          array(0) = e
+        })
+      } else {
+        getLengthAndExtractorForBeanClass(className, 0)
+      }
+    }).getOrElse((0, (e: Any, arr: Array[Any]) => {}))
 
+
+    val (valueLength, valueConverter) = valueClass.map(className => {
+      val valType = inferDataType(className)
+      if (valType.isDefined) {
+        (1, (e: Any, array: Array[Any]) => {
+          array(keyLength) = e
+        })
+      } else {
+        getLengthAndExtractorForBeanClass(className, keyLength)
+      }
+    }).getOrElse((0, (e: Any, arr: Array[Any]) => {}))
+
+    (keyLength + valueLength, keyConverter, valueConverter)
   }
 
 
@@ -169,9 +174,9 @@ object GemFireRelation {
 }
 
 final class DefaultSource
-    extends RelationProvider  with SchemaRelationProvider with DataSourceRegister {
+    extends RelationProvider with SchemaRelationProvider with DataSourceRegister {
 
-       // with CreatableRelationProvider
+  // with CreatableRelationProvider
 
   def shortName(): String = "GemFire"
 
@@ -185,9 +190,14 @@ final class DefaultSource
     val regionPath = params.getOrElse(Constants.REGION_PATH, throw OtherUtils.analysisException(
       "GemFire Region Path is missing"))
     val pkColumnName = params.get(Constants.PRIMARY_KEY_COLUMN_NAME)
+    val valueColumnName = params.get(Constants.VALUE_COLUMN_NAME)
     val kc = params.get(Constants.keyConstraintClass)
     val vc = params.get(Constants.valueConstraintClass)
-    GemFireRelation(snc, regionPath, pkColumnName , kc, vc)
+    if (kc.isEmpty && vc.isEmpty) {
+      OtherUtils.analysisException("Either Key Class  or value class  " +
+          "need to be provided for the table definition")
+    }
+    GemFireRelation(snc, regionPath, pkColumnName, valueColumnName, kc, vc)
   }
 
   override def createRelation(sqlContext: SQLContext,
