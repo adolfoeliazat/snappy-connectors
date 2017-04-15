@@ -12,7 +12,7 @@ import scala.reflect.ClassTag
 import io.snappydata.spark.gemfire.connector.internal.rdd.GemFireRegionRDD
 
 import org.apache.spark.rdd.RDD
-import org.apache.spark.sql.catalyst.expressions.{AttributeReference, GenericRow}
+import org.apache.spark.sql.catalyst.expressions.{Attribute, AttributeReference, GenericRow}
 import org.apache.spark.sql.catalyst.{CatalystTypeConverters, JavaTypeInference}
 import org.apache.spark.sql.collection.{Utils => OtherUtils}
 import org.apache.spark.sql.execution.columnar.ExternalStoreUtils.CaseInsensitiveMutableHashMap
@@ -23,8 +23,9 @@ import org.apache.spark.util.{Utils => MainUtils}
 
 case class GemFireRelation(@transient override val sqlContext: SnappyContext, regionPath: String,
     primaryKeyColumnName: Option[String], valueColumnName: Option[String],
-    keyConstraint: Option[String], valueConstraint: Option[String])
-    extends BaseRelation with TableScan {
+    keyConstraint: Option[String], valueConstraint: Option[String],
+    providedSchema: Option[StructType], val asSelect: Boolean)
+    extends BaseRelation with TableScan with SchemaInsertableRelation {
 
   private val keyTag = ClassTag[Any](keyConstraint.map(MainUtils.classForName(_)).
       getOrElse(classOf[Any]))
@@ -50,22 +51,105 @@ case class GemFireRelation(@transient override val sqlContext: SnappyContext, re
     }, true)
   }
 
-  override val schema = {
+  val inferredKeySchema = StructType(keyConstraint.map(x => {
     val (inferedKeyType, nullableKey) = JavaTypeInference.inferDataType(keyTag.runtimeClass)
-    val (inferedValType, nullableValue) = JavaTypeInference.inferDataType(valueTag.runtimeClass)
+    convertDataTypeToStructFields(inferedKeyType, nullableKey,
+      primaryKeyColumnName.getOrElse(Constants.defaultKeyColumnName))
+  }).getOrElse(Array.empty[StructField]) )
 
-    val keyStructFields = inferedKeyType match {
-      case x: StructType => x.fields
-      case _ => Array(StructField(primaryKeyColumnName.getOrElse(Constants.defaultKeyColumnName),
-        inferedKeyType, nullableKey))
-    }
-    val valueStructFields = inferedValType match {
-      case x: StructType => x.fields
-      case _ => Array(StructField(valueColumnName.getOrElse(Constants.defaultValueColumnName),
-        inferedValType, nullableValue))
-    }
-    StructType(keyStructFields ++ valueStructFields)
+  val inferredValueSchema = StructType(valueConstraint.map(x => {
+    val (inferedValType, nullableValue) = JavaTypeInference.
+        inferDataType(valueTag.runtimeClass)
+    convertDataTypeToStructFields(inferedValType, nullableValue,
+      valueColumnName.getOrElse(Constants.defaultValueColumnName))
+  }).getOrElse(Array.empty[StructField]))
 
+  private val inferredSchema = inferredKeySchema.merge(inferredValueSchema)
+
+  override val schema = {
+    def checkDataTypeMismatch(field1: StructField, field2: StructField): Boolean = {
+      if (field1.dataType.equals(field2.dataType)) {
+        false
+      } else {
+        val isField1Struct = field1.dataType match {
+          case _: StructType => true
+          case _ => false
+        }
+
+        val isField2Struct = field2.dataType match {
+          case _: StructType => true
+          case _ => false
+        }
+
+        if (isField1Struct && isField2Struct) {
+          val structField1 = field1.dataType.asInstanceOf[StructType]
+          val structField2 = field2.dataType.asInstanceOf[StructType]
+          structField1.zip(structField2).exists(pair => checkDataTypeMismatch(pair._1, pair._2))
+        } else {
+          true
+        }
+      }
+    }
+    providedSchema.map(ps => {
+      // check if the data types of inferred schema & provided schema match
+      if (inferredSchema.size != providedSchema.size ||
+          inferredSchema.zip(ps).exists(pair => checkDataTypeMismatch(pair._1, pair._2))) {
+        throw OtherUtils.analysisException("The data types of provided schema & " +
+            "inferred schema do not match")
+      }
+      else ps
+    }).getOrElse(inferredSchema)
+
+  }
+
+
+  override def insertableRelation(sourceSchema: Seq[Attribute]): Option[InsertableRelation] = None
+
+  override def append(rows: RDD[Row], time: Long): Unit = {}
+
+  override def insert(data: DataFrame, overwrite: Boolean): Unit = {
+    val sourceSchema = data.schema
+
+    // check for compatibility of the source schema with this relation
+    if (keyConstraint.isEmpty) {
+      sourceSchema(0).dataType match {
+        case _: StructType => throw OtherUtils.analysisException("The first element of the " +
+            "source is a nested type, which needs a Bean class as key class for GemFire Region")
+        case _ =>
+      }
+    }
+    // If key length is not provided treat it as 1
+    val inferredKeyLength = if (inferredKeySchema.length == 0) 1 else inferredKeySchema.length
+
+    if (valueConstraint.isEmpty) {
+      val availableValueLength = sourceSchema.length - inferredKeyLength
+      if(availableValueLength != 1) {
+        throw OtherUtils.analysisException("If the value fields in the Row object is more than 1," +
+            " then domain class for GemFire Region value should be provided as a Bean")
+      }
+    }
+
+    val inferredValueLength = if (inferredValueSchema.length == 0) 1 else inferredValueSchema.length
+
+    if(inferredKeyLength + inferredValueLength != providedSchema.size) {
+      throw OtherUtils.analysisException("The source schema is not compatible with " +
+          "the target schema")
+    }
+
+    data.rdd.map(row => {
+
+
+    })
+
+  }
+
+  private def convertDataTypeToStructFields(dataType: DataType, nullable: Boolean,
+      defaultColumnName: String): Array[StructField] = {
+    dataType match {
+      case x: StructType => x.fields
+      case _ => Array(StructField(primaryKeyColumnName.getOrElse(defaultColumnName),
+        dataType, nullable))
+    }
   }
 }
 
@@ -126,8 +210,8 @@ object GemFireRelation {
           val (length, cnvrtr) = getLengthAndExtractorForBeanClass(e.getReturnType, 0)
           val arr = Array.ofDim[Any](length)
           (e, (x: Any) => {
-             cnvrtr(x, arr)
-             new GenericRow(arr)
+            cnvrtr(x, arr)
+            new GenericRow(arr)
           })
         }
         case _ => (e, CatalystTypeConverters.createToCatalystConverter(attr.dataType))
@@ -182,15 +266,14 @@ object GemFireRelation {
 }
 
 final class DefaultSource
-    extends RelationProvider with SchemaRelationProvider with DataSourceRegister {
-
-  // with CreatableRelationProvider
+    extends RelationProvider with SchemaRelationProvider with CreatableRelationProvider
+        with DataSourceRegister {
 
   def shortName(): String = "GemFire"
 
   def createRelation(sqlContext: SQLContext, mode: SaveMode,
       options: Map[String, String], schemaOpt: Option[StructType],
-      asSelect: Boolean): BaseRelation = {
+      asSelect: Boolean): GemFireRelation = {
 
     val params = new CaseInsensitiveMutableHashMap(options)
 
@@ -202,10 +285,10 @@ final class DefaultSource
     val kc = params.get(Constants.keyConstraintClass)
     val vc = params.get(Constants.valueConstraintClass)
     if (kc.isEmpty && vc.isEmpty) {
-      OtherUtils.analysisException("Either Key Class  or value class  " +
+      throw OtherUtils.analysisException("Either Key Class  or value class  " +
           "need to be provided for the table definition")
     }
-    GemFireRelation(snc, regionPath, pkColumnName, valueColumnName, kc, vc)
+    GemFireRelation(snc, regionPath, pkColumnName, valueColumnName, kc, vc, schemaOpt, asSelect)
   }
 
   override def createRelation(sqlContext: SQLContext,
@@ -226,21 +309,25 @@ final class DefaultSource
     createRelation(sqlContext, mode, options, Some(schema), asSelect = false)
   }
 
-  /*
+
   override def createRelation(sqlContext: SQLContext, mode: SaveMode,
       options: Map[String, String], data: DataFrame): BaseRelation = {
+    /*
     val relation = createRelation(sqlContext, mode, options, Some(data.schema),
-      asSelect = true)
-    var success = false
-    try {
-      relation.insert(data, mode == SaveMode.Overwrite)
-      success = true
-      relation
-    } finally {
-      if (!success && !relation.tableExists) {
-        relation.destroy(ifExists = true)
-      }
-    }
+       asSelect = true)
+     var success = false
+     try {
+       relation.insert(data, mode == SaveMode.Overwrite)
+       success = true
+       relation
+     } finally {
+       if (!success && !relation.tableExists) {
+         relation.destroy(ifExists = true)
+       }
+     }
+     */
+
+     throw new UnsupportedOperationException("work in progress")
   }
-  */
+
 }
