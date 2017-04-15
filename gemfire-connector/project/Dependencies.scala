@@ -22,8 +22,10 @@ object Dependencies {
   object Compile {
     val sparkStreaming = "org.apache.spark" %% "spark-streaming" % "2.0.0" 
     val sparkSql = "org.apache.spark" %% "spark-sql" % "2.0.0"
-    val snappydata = "io.snappydata" % "gemfire-core" % "1.5.5"  
+    val snappyDataCore = "io.snappydata" %% "snappydata-core" % "0.8"  
+    val snappyDataGemfire = "io.snappydata" % "gemfire-core" % "1.5.5"  
     val gemfire = "com.gemstone.gemfire" % "gemfire" % "8.0"  from "file:///" + gemfireJarPath.getAbsolutePath 
+    val logging = "org.apache.logging.log4j" % "log4j-api" % "2.8.1" 
   }
   object Test {
  //   val scalaTest = "org.scalatest" %% "scalatest" % "2.2.1" % "it, test" //scala test framework
@@ -37,9 +39,9 @@ object Dependencies {
 
   val unitTests = Seq( mockito)
 
-  val connector = unitTests ++ Seq(sparkStreaming, sparkSql, snappydata)
+  val connector = unitTests ++ Seq(sparkStreaming, sparkSql, snappyDataGemfire, snappyDataCore)
 
-  val functions = Seq(gemfire)
+  val functions = Seq(gemfire, logging)
   //val sharedConnector = Seq(snappydata)
   //val sharedFunctions = Seq(gemfire)
  

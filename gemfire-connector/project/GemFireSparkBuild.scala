@@ -43,10 +43,7 @@ gfcResolvers ++ rs
     id = "shared-connector",
     base = file("shared"),
     settings = commonSettings ++ Seq(libraryDependencies ++= Dependencies.connector,
-    //externalResolvers ++= gfcResolverss,
-    externalResolvers <<= externalResolvers map {rs =>
-  gfcResolvers ++ rs
-},
+    resolvers ++= gfcResolvers,
     description := "Shared artifacts",
     target := file("shared/connector/classes"),
     publishArtifact :=  false,
@@ -60,11 +57,7 @@ gfcResolvers ++ rs
     id = "shared-functions",
     base = file("shared"),
     settings = commonSettings ++ Seq(libraryDependencies ++= Dependencies.functions,
-    //externalResolvers ++= gfcResolverss,
-
-externalResolvers <<= externalResolvers map {rs =>
-gfcResolvers ++ rs
-},
+    resolvers ++= gfcResolvers,
     description := "Shared artifacts",
     target := file("shared/gfefunctions/classes"),
     publishArtifact :=  false,
@@ -77,11 +70,7 @@ gfcResolvers ++ rs
     id = "gemfire-functions",
     base = file("gfeFunctions"),
     settings = commonSettings ++ Seq(libraryDependencies ++= Dependencies.functions,
-    //externalResolvers ++= gfcResolverss,
-
-externalResolvers <<= externalResolvers map {rs =>
-gfcResolvers ++ rs
-},
+    resolvers ++= gfcResolvers,
     description := "Required GemFire Functions to be deployed onto the GemFire Cluster before using the GemFire Spark Connector"
     )
   ).settings((mappings in (Configurations.Compile, packageBin)) <++= mappings in (sharedFunctionsProj, Configurations.Compile,packageBin )
@@ -91,12 +80,8 @@ gfcResolvers ++ rs
     id = "gemfire-spark-connector",
     base = file("connector"),
     settings = gfcSettings ++ Seq(libraryDependencies ++= Dependencies.connector,
-    //externalResolvers ++= gfcResolverss,
-
-externalResolvers <<= externalResolvers  map {rs =>
-gfcResolvers ++ rs
-},
-    description := "A library that exposes GemFire regions as Spark RDDs, writes Spark RDDs to GemFire regions, and executes OQL queries from Spark Applications to GemFire"
+    resolvers ++= gfcResolvers,
+description := "A library that exposes GemFire regions as Spark RDDs, writes Spark RDDs to GemFire regions, and executes OQL queries from Spark Applications to GemFire"
     )).settings((mappings in (Configurations.Compile, packageBin)) <++= mappings in (sharedConnectorProj, Configurations.Compile,packageBin )
  ).dependsOn(sharedConnectorProj) .configs(IntegrationTest)
 
@@ -115,11 +100,7 @@ gfcResolvers ++ rs
     id = "basic-demos",
     base = demoPath / "basic-demos",
     settings = demoSettings ++ Seq(libraryDependencies ++= Dependencies.demos,
-     // externalResolvers ++= gfcResolverss,
-
-externalResolvers <<= externalResolvers map {rs =>
-gfcResolvers ++ rs
-},
+     resolvers ++= gfcResolvers,
       description := "Sample applications that demonstrates functionality of the GemFire Spark Connector"
     )
   ).dependsOn(gemfireSparkConnector)

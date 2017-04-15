@@ -37,7 +37,6 @@ import com.gemstone.gemfire.internal.cache.partitioned.PREntriesIterator;
 import com.gemstone.gemfire.internal.logging.LogService;
 import io.snappydata.spark.gemfire.connector.internal.gemfirefunctions.shared.ConnectorFunctionIDs;
 import org.apache.logging.log4j.Logger;
-
 /**
  * GemFire function that is used by `SparkContext.gemfireRegion(regionPath, whereClause)`
  * to retrieve region data set for the given bucket set as a RDD partition
