@@ -288,7 +288,8 @@ final class DefaultSource
       throw OtherUtils.analysisException("Either Key Class  or value class  " +
           "need to be provided for the table definition")
     }
-    GemFireRelation(snc, regionPath, pkColumnName, valueColumnName, kc, vc, schemaOpt, asSelect)
+    //GemFireRelation(snc, regionPath, pkColumnName, valueColumnName, kc, vc, schemaOpt, asSelect)
+    GemFireRelation(snc, regionPath, pkColumnName, valueColumnName, kc, vc, None, asSelect)
   }
 
   override def createRelation(sqlContext: SQLContext,
@@ -306,7 +307,8 @@ final class DefaultSource
     val allowExisting = options.get(JdbcExtendedUtils
         .ALLOW_EXISTING_PROPERTY).exists(_.toBoolean)
     val mode = if (allowExisting) SaveMode.Ignore else SaveMode.ErrorIfExists
-    createRelation(sqlContext, mode, options, Some(schema), asSelect = false)
+    //createRelation(sqlContext, mode, options, Some(schema), asSelect = false)
+    createRelation(sqlContext, mode, options, None, asSelect = false)
   }
 
 
