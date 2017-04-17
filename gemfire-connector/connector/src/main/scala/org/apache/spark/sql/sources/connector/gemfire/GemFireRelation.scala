@@ -27,6 +27,7 @@ case class GemFireRelation(@transient override val sqlContext: SnappyContext, re
     providedSchema: Option[StructType], val asSelect: Boolean)
     extends BaseRelation with TableScan with SchemaInsertableRelation {
 
+
   private val keyTag = ClassTag[Any](keyConstraint.map(MainUtils.classForName(_)).
       getOrElse(classOf[Any]))
   private val valueTag = ClassTag[Any](valueConstraint.map(MainUtils.classForName(_)).
@@ -64,8 +65,12 @@ case class GemFireRelation(@transient override val sqlContext: SnappyContext, re
       valueColumnName.getOrElse(Constants.defaultValueColumnName))
   }).getOrElse(Array.empty[StructField]))
 
-  private val inferredSchema = inferredKeySchema.merge(inferredValueSchema)
+  // private val inferredSchema = inferredKeySchema.merge(inferredValueSchema)
 
+  override val schema = providedSchema.getOrElse(inferredKeySchema.merge(inferredValueSchema))
+
+
+  /*
   override val schema = {
     def checkDataTypeMismatch(field1: StructField, field2: StructField): Boolean = {
       if (field1.dataType.equals(field2.dataType)) {
@@ -101,6 +106,7 @@ case class GemFireRelation(@transient override val sqlContext: SnappyContext, re
     }).getOrElse(inferredSchema)
 
   }
+  */
 
 
   override def insertableRelation(sourceSchema: Seq[Attribute]): Option[InsertableRelation] = None
@@ -288,8 +294,8 @@ final class DefaultSource
       throw OtherUtils.analysisException("Either Key Class  or value class  " +
           "need to be provided for the table definition")
     }
-    //GemFireRelation(snc, regionPath, pkColumnName, valueColumnName, kc, vc, schemaOpt, asSelect)
-    GemFireRelation(snc, regionPath, pkColumnName, valueColumnName, kc, vc, None, asSelect)
+    GemFireRelation(snc, regionPath, pkColumnName, valueColumnName, kc, vc, schemaOpt, asSelect)
+    //GemFireRelation(snc, regionPath, pkColumnName, valueColumnName, kc, vc, None, asSelect)
   }
 
   override def createRelation(sqlContext: SQLContext,
@@ -307,8 +313,8 @@ final class DefaultSource
     val allowExisting = options.get(JdbcExtendedUtils
         .ALLOW_EXISTING_PROPERTY).exists(_.toBoolean)
     val mode = if (allowExisting) SaveMode.Ignore else SaveMode.ErrorIfExists
-    //createRelation(sqlContext, mode, options, Some(schema), asSelect = false)
-    createRelation(sqlContext, mode, options, None, asSelect = false)
+    createRelation(sqlContext, mode, options, Some(schema), asSelect = false)
+   // createRelation(sqlContext, mode, options, None, asSelect = false)
   }
 
 
