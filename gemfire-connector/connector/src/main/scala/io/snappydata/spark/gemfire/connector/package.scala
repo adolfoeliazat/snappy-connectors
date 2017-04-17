@@ -22,7 +22,7 @@ import io.snappydata.spark.gemfire.connector.internal.rdd.{OnePartitionPartition
 
 import org.apache.spark.SparkContext
 import org.apache.spark.rdd.RDD
-import org.apache.spark.sql.SQLContext
+import org.apache.spark.sql.{DataFrame, SQLContext}
 
 /**
   * The root package of Geode connector for Apache Spark.
@@ -50,11 +50,12 @@ package object connector {
   implicit def toSQLContextFunctions(sqlContext: SQLContext): GemFireSQLContextFunctions =
     new GemFireSQLContextFunctions(sqlContext)
 
-  implicit def toGeodePairRDDFunctions[K: ClassTag, V: ClassTag]
+  implicit def toGemFirePairRDDFunctions[K: ClassTag, V: ClassTag]
   (self: RDD[(K, V)]): GemFirePairRDDFunctions[K, V] = new GemFirePairRDDFunctions(self)
 
-  implicit def toGeodeRDDFunctions[T: ClassTag]
-  (self: RDD[T]): GemFireRDDFunctions[T] = new GemFireRDDFunctions(self)
+
+  implicit def toGemFireRowRDDFunctions
+  (self: DataFrame): GemFireDataFrameFunctions = new GemFireDataFrameFunctions(self)
 
   /** utility implicits */
 

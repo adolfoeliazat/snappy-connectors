@@ -33,6 +33,8 @@ case class GemFireRelation(@transient override val sqlContext: SnappyContext, re
   private val valueTag = ClassTag[Any](valueConstraint.map(MainUtils.classForName(_)).
       getOrElse(classOf[Any]))
 
+
+
   override def buildScan(): RDD[Row] = {
     val rdd = GemFireRegionRDD(sqlContext.sparkContext, regionPath,
       Map.empty[String, String])(keyTag, valueTag)
@@ -40,7 +42,7 @@ case class GemFireRelation(@transient override val sqlContext: SnappyContext, re
       val keyClass = keyConstraint.map(MainUtils.classForName(_))
       val valueClass = valueConstraint.map(MainUtils.classForName(_))
       val (totalSize, keyConverter, valueConverter) = GemFireRelation.getLengthAndConverters(
-        keyClass, valueClass)
+        keyClass, valueClass, rowObjectLength)
       iter.map { case (k, v) => {
         val array = Array.ofDim[Any](totalSize)
         keyConverter(k, array)
@@ -58,12 +60,37 @@ case class GemFireRelation(@transient override val sqlContext: SnappyContext, re
       primaryKeyColumnName.getOrElse(Constants.defaultKeyColumnName))
   }).getOrElse(Array.empty[StructField]) )
 
-  val inferredValueSchema = StructType(valueConstraint.map(x => {
-    val (inferedValType, nullableValue) = JavaTypeInference.
-        inferDataType(valueTag.runtimeClass)
-    convertDataTypeToStructFields(inferedValType, nullableValue,
-      valueColumnName.getOrElse(Constants.defaultValueColumnName))
-  }).getOrElse(Array.empty[StructField]))
+  val rowObjectLength: Option[Int] = if (classOf[Row].isAssignableFrom(valueTag.runtimeClass)) {
+    if (providedSchema.isDefined) {
+      // there should be no embedded struct type for now
+      if (!providedSchema.map(_.exists(f => f.dataType match {
+        case _: StructType => true
+        case _ => false
+      })).get) {
+        Some(providedSchema.get.length - inferredKeySchema.length)
+      } else {
+        throw OtherUtils.analysisException("Provided schema for Row objects should not have" +
+            "nested struct type. For this to work, convert Row object into a Bean class")
+      }
+    } else {
+      throw OtherUtils.analysisException("To access Row objects from GemFire region, " +
+          "provided a schema ")
+    }
+  } else {
+    None
+  }
+
+  val inferredValueSchema = rowObjectLength.map( _ => StructType(
+    providedSchema.get.drop(inferredKeySchema.length))).getOrElse(
+    StructType(valueConstraint.map(x => {
+      val (inferedValType, nullableValue) = JavaTypeInference.
+          inferDataType(valueTag.runtimeClass)
+      convertDataTypeToStructFields(inferedValType, nullableValue,
+        valueColumnName.getOrElse(Constants.defaultValueColumnName))
+    }).getOrElse(Array.empty[StructField]))
+  )
+
+
 
   // private val inferredSchema = inferredKeySchema.merge(inferredValueSchema)
 
@@ -168,7 +195,8 @@ object GemFireRelation {
     }
   }
 
-  private def getLengthAndConverters(keyClass: Option[Class[_]], valueClass: Option[Class[_]]):
+  private def getLengthAndConverters(keyClass: Option[Class[_]],
+      valueClass: Option[Class[_]], rowObjectLength: Option[Int]):
   (Int, (Any, Array[Any]) => Unit, (Any, Array[Any]) => Unit) = {
 
     val (keyLength, keyConverter) = keyClass.map(className => {
@@ -183,17 +211,25 @@ object GemFireRelation {
     }).getOrElse((0, (e: Any, arr: Array[Any]) => {}))
 
 
-    val (valueLength, valueConverter) = valueClass.map(className => {
-      val valType = inferDataType(className)
-      if (valType.isDefined) {
-        (1, (e: Any, array: Array[Any]) => {
-          array(keyLength) = e
-        })
-      } else {
-        getLengthAndExtractorForBeanClass(className, keyLength)
-      }
-    }).getOrElse((0, (e: Any, arr: Array[Any]) => {}))
+    val (valueLength, valueConverter) = rowObjectLength.map( length => {
+      (length, (e: Any, array: Array[Any]) => {
+        val temp = e.asInstanceOf[Row]
+        Array.copy(temp.toSeq.toArray[Any], 0, array, keyLength, temp.length)
+      })
+    } ).getOrElse(
+      valueClass.map(className => {
 
+        val valType = inferDataType(className)
+        if (valType.isDefined) {
+          (1, (e: Any, array: Array[Any]) => {
+            array(keyLength) = e
+          })
+        } else {
+          getLengthAndExtractorForBeanClass(className, keyLength)
+        }
+      }
+      ).getOrElse((0, (e: Any, arr: Array[Any]) => {}))
+    )
     (keyLength + valueLength, keyConverter, valueConverter)
   }
 
@@ -295,7 +331,7 @@ final class DefaultSource
           "need to be provided for the table definition")
     }
     GemFireRelation(snc, regionPath, pkColumnName, valueColumnName, kc, vc, schemaOpt, asSelect)
-    //GemFireRelation(snc, regionPath, pkColumnName, valueColumnName, kc, vc, None, asSelect)
+
   }
 
   override def createRelation(sqlContext: SQLContext,
@@ -314,7 +350,7 @@ final class DefaultSource
         .ALLOW_EXISTING_PROPERTY).exists(_.toBoolean)
     val mode = if (allowExisting) SaveMode.Ignore else SaveMode.ErrorIfExists
     createRelation(sqlContext, mode, options, Some(schema), asSelect = false)
-   // createRelation(sqlContext, mode, options, None, asSelect = false)
+
   }
 
 

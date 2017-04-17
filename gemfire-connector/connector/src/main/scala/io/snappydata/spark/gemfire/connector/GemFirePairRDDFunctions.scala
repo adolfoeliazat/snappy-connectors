@@ -22,6 +22,9 @@ import io.snappydata.spark.gemfire.connector.internal.DefaultGemFireConnectionMa
 import org.apache.spark.Logging
 import org.apache.spark.api.java.function.Function
 import org.apache.spark.rdd.RDD
+import org.apache.spark.sql.collection.Utils
+import org.apache.spark.sql.types.StructType
+import org.apache.spark.sql.{DataFrame, Row}
 
 /**
   * Extra gemFire functions on RDDs of (key, value) pairs through an implicit conversion.
@@ -38,7 +41,6 @@ class GemFirePairRDDFunctions[K, V](val rdd: RDD[(K, V)]) extends Serializable w
     */
   def saveToGemFire(
       regionPath: String,
-
       opConf: Map[String, String] = Map.empty): Unit = {
     DefaultGemFireConnectionManager.getConnection.validateRegion[K, V](regionPath)
     if (log.isDebugEnabled)
@@ -133,4 +135,32 @@ class GemFirePairRDDFunctions[K, V](val rdd: RDD[(K, V)]) extends Serializable w
   }
 
 
+}
+
+class GemFireDataFrameFunctions(val df: DataFrame) extends Serializable with Logging {
+
+  /**
+    * Save the RDD of pairs to GemFire key-value store without any conversion
+    *
+    * @param regionPath the full path of region that the RDD is stored
+    * @param opConf     the optional parameters for this operation
+    */
+  def saveToGemFire[K](
+      regionPath: String,
+      keyExtractor: Row => K,
+      opConf: Map[String, String] = Map.empty): Unit = {
+    DefaultGemFireConnectionManager.getConnection.validateRegion[K, Row](regionPath)
+    if(df.schema.exists(f => {
+      f.dataType match {
+        case _: StructType => true
+        case _ => false
+      }
+    })) {
+      throw Utils.analysisException("Saving Row object in GemFire is not " +
+          "implemented for nested struct type ")
+    }
+    val pairRDD = df.rdd.map(row => (keyExtractor(row), row.toSeq.toArray))
+    val writer = new GemFirePairRDDWriter[K, Array[Any]](regionPath, opConf)
+    pairRDD.sparkContext.runJob(pairRDD, writer.write _)
+  }
 }

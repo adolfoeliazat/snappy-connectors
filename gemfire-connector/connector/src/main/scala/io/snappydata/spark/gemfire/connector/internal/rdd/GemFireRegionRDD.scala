@@ -24,6 +24,8 @@ import io.snappydata.spark.gemfire.connector.internal.DefaultGemFireConnectionMa
 import io.snappydata.spark.gemfire.connector.internal.rdd.GemFireRDDPartitioner._
 
 import org.apache.spark.rdd.RDD
+import org.apache.spark.sql.Row
+import org.apache.spark.sql.catalyst.expressions.GenericRow
 import org.apache.spark.{Partition, SparkContext, TaskContext}
 
 /**
@@ -47,6 +49,8 @@ class GemFireRegionRDD[K, V] private[connector]
   def kClassTag = ctk
 
   def vClassTag = ctv
+
+  val isRowObject = classOf[Row].isAssignableFrom(vClassTag.runtimeClass)
 
   /** When where clause is specified, OQL query
     * `select key, value from /<region-path>.entries where <where clause> `
@@ -121,7 +125,15 @@ class GemFireRegionRDD[K, V] private[connector]
   override def compute(split: Partition, context: TaskContext): Iterator[(K, V)] = {
     val partition = split.asInstanceOf[GemFireRDDPartition]
     logDebug(s"compute RDD id=${this.id} partition $partition")
-    DefaultGemFireConnectionManager.getConnection.getRegionData[K, V](regionPath, whereClause, partition)
+    val iter = DefaultGemFireConnectionManager.getConnection.
+        getRegionData[K, V](regionPath, whereClause, partition)
+    if (isRowObject) {
+     iter.map{
+       case (k, v) => (k, new GenericRow(v.asInstanceOf[Array[Any]]).asInstanceOf[V])
+     }
+    } else {
+      iter
+    }
     // new InterruptibleIterator(context, split.asInstanceOf[GeodeRDDPartition[K, V]].iterator)
   }
 
