@@ -345,15 +345,16 @@ final class DefaultSource
       throw OtherUtils.analysisException("Either Key Class  or value class  " +
           "need to be provided for the table definition")
     }
-    val relation = GemFireRelation(snc, regionPath, pkColumnName, valueColumnName, kc, vc,
+    GemFireRelation(snc, regionPath, pkColumnName, valueColumnName, kc, vc,
       schemaOpt, asSelect)
-
+    /*
     val catalog = sqlContext.sparkSession.asInstanceOf[SnappySession].sessionCatalog
     catalog.registerDataSourceTable(
       catalog.newQualifiedTableName(regionPath), Some(relation.schema),
       Array.empty[String], classOf[connector.gemfire.DefaultSource].getCanonicalName,
       options, relation)
     relation
+    */
 
   }
 
