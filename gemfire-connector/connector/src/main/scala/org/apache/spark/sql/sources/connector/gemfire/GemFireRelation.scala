@@ -16,6 +16,7 @@ import org.apache.spark.sql.catalyst.expressions.{Attribute, AttributeReference,
 import org.apache.spark.sql.catalyst.{CatalystTypeConverters, JavaTypeInference}
 import org.apache.spark.sql.collection.{Utils => OtherUtils}
 import org.apache.spark.sql.execution.columnar.ExternalStoreUtils.CaseInsensitiveMutableHashMap
+import org.apache.spark.sql.row.GemFireXDDialect
 import org.apache.spark.sql.sources._
 import org.apache.spark.sql.types._
 import org.apache.spark.sql.{SQLContext, SaveMode, SnappyContext, _}
@@ -135,7 +136,20 @@ case class GemFireRelation(@transient override val sqlContext: SnappyContext, re
   }
   */
 
+  // create a dummy table in GemXD
+  /*
+  this.createGemXDTable()
 
+
+  def createGemXDTable(): Unit = {
+    /*
+    val sqlStr = s"create table $regionPath " +
+        JdbcExtendedUtils.schemaString(schema, GemFireXDDialect)
+        */
+    sqlContext.createTable(regionPath, "row", schema, Map.empty[String, String], true)
+
+  }
+*/
   override def insertableRelation(sourceSchema: Seq[Attribute]): Option[InsertableRelation] = None
 
   override def append(rows: RDD[Row], time: Long): Unit = {}
@@ -320,6 +334,7 @@ final class DefaultSource
     val params = new CaseInsensitiveMutableHashMap(options)
 
     val snc = sqlContext.asInstanceOf[SnappyContext]
+
     val regionPath = params.getOrElse(Constants.REGION_PATH, throw OtherUtils.analysisException(
       "GemFire Region Path is missing"))
     val pkColumnName = params.get(Constants.PRIMARY_KEY_COLUMN_NAME)
@@ -330,7 +345,15 @@ final class DefaultSource
       throw OtherUtils.analysisException("Either Key Class  or value class  " +
           "need to be provided for the table definition")
     }
-    GemFireRelation(snc, regionPath, pkColumnName, valueColumnName, kc, vc, schemaOpt, asSelect)
+    val relation = GemFireRelation(snc, regionPath, pkColumnName, valueColumnName, kc, vc,
+      schemaOpt, asSelect)
+
+    val catalog = sqlContext.sparkSession.asInstanceOf[SnappySession].sessionCatalog
+    catalog.registerDataSourceTable(
+      catalog.newQualifiedTableName(regionPath), Some(relation.schema),
+      Array.empty[String], classOf[connector.gemfire.DefaultSource].getCanonicalName,
+      options, relation)
+    relation
 
   }
 
