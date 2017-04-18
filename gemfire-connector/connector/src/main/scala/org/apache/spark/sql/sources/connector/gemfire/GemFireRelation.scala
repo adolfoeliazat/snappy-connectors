@@ -7,15 +7,20 @@ package org.apache.spark.sql.sources.connector.gemfire
 
 import java.beans.Introspector
 
+import scala.collection.mutable
 import scala.reflect.ClassTag
 
 import io.snappydata.spark.gemfire.connector.internal.rdd.GemFireRegionRDD
 
 import org.apache.spark.rdd.RDD
+import org.apache.spark.sql.catalyst.catalog.{CatalogDatabase, CatalogStorageFormat, CatalogTable, CatalogTableType}
 import org.apache.spark.sql.catalyst.expressions.{Attribute, AttributeReference, GenericRow}
 import org.apache.spark.sql.catalyst.{CatalystTypeConverters, JavaTypeInference}
 import org.apache.spark.sql.collection.{Utils => OtherUtils}
+import org.apache.spark.sql.execution.columnar.ExternalStoreUtils
 import org.apache.spark.sql.execution.columnar.ExternalStoreUtils.CaseInsensitiveMutableHashMap
+import org.apache.spark.sql.execution.datasources.LogicalRelation
+import org.apache.spark.sql.hive.{ExternalTableType, QualifiedTableName, SnappyStoreHiveCatalog}
 import org.apache.spark.sql.row.GemFireXDDialect
 import org.apache.spark.sql.sources._
 import org.apache.spark.sql.types._
@@ -349,12 +354,86 @@ final class DefaultSource
       schemaOpt, asSelect)
 
     val catalog = sqlContext.sparkSession.asInstanceOf[SnappySession].sessionCatalog
-    catalog.registerDataSourceTable(
-      catalog.newQualifiedTableName(regionPath), Some(relation.schema),
+    val ti  = catalog.newQualifiedTableName(regionPath)
+    catalog.registerDataSourceTable(ti, Some(relation.schema),
       Array.empty[String], classOf[connector.gemfire.DefaultSource].getCanonicalName,
       options, relation)
+
+    this.registerToGemXD(relation.schema, snc, ti, catalog.asInstanceOf[SnappyStoreHiveCatalog], options)
     relation
 
+  }
+
+  def registerToGemXD(schema: StructType, snc: SnappyContext, ti: QualifiedTableName,
+      catalog: SnappyStoreHiveCatalog, options: Map[String, String]) : Unit = {
+    val tableProperties = new mutable.HashMap[String, String]
+    val provider = classOf[execution.row.DefaultSource].getCanonicalName
+    tableProperties.put(SnappyStoreHiveCatalog.HIVE_PROVIDER, provider)
+
+    // Saves optional user specified schema.  Serialized JSON schema string
+    // may be too long to be stored into a single meta-store SerDe property.
+    // In this case, we split the JSON string and store each part as a
+    // separate SerDe property.
+
+      val threshold = snc.conf.schemaStringLengthThreshold
+      val schemaJsonString = schema.json
+      // Split the JSON string.
+      val parts = schemaJsonString.grouped(threshold).toSeq
+      tableProperties.put(SnappyStoreHiveCatalog.HIVE_SCHEMA_NUMPARTS, parts.size.toString)
+      parts.zipWithIndex.foreach { case (part, index) =>
+        tableProperties.put(s"$SnappyStoreHiveCatalog.HIVE_SCHEMA_PART.$index", part)
+      }
+
+
+    // get the tableType
+    val tableType = ExternalTableType.Row
+    tableProperties.put(JdbcExtendedUtils.TABLETYPE_PROPERTY, tableType.toString)
+    // add baseTable property if required
+
+
+    val schemaName = ti.schemaName
+    val dbInHive = catalog.client.getDatabaseOption(schemaName)
+    dbInHive match {
+      case Some(_) => // We are all good
+      case None => catalog.client.createDatabase(CatalogDatabase(
+        schemaName,
+        description = schemaName,
+        catalog.getDefaultDBPath(schemaName),
+        Map.empty[String, String]),
+        ignoreIfExists = true)
+      // Path is empty String for now @TODO for parquet & hadoop relation
+      // handle path correctly
+    }
+
+    var newOptions = options
+    options.get(ExternalStoreUtils.COLUMN_BATCH_SIZE) match {
+      case Some(_) =>
+      case None => newOptions += (ExternalStoreUtils.COLUMN_BATCH_SIZE ->
+          ExternalStoreUtils.defaultColumnBatchSize(catalog.snappySession).toString)
+    }
+    options.get(ExternalStoreUtils.COLUMN_MAX_DELTA_ROWS) match {
+      case Some(_) =>
+      case None => newOptions += (ExternalStoreUtils.COLUMN_MAX_DELTA_ROWS ->
+          ExternalStoreUtils.defaultColumnMaxDeltaRows(catalog.snappySession).toString)
+    }
+
+    val hiveTable = CatalogTable(
+      identifier = ti,
+      // Can not inherit from this class. Ideally we should
+      // be extending from this case class
+      tableType = CatalogTableType.EXTERNAL,
+      schema = Nil,
+      storage = CatalogStorageFormat(
+        locationUri = None,
+        inputFormat = None,
+        outputFormat = None,
+        serde = None,
+        compressed = false,
+        serdeProperties = newOptions
+      ),
+      properties = tableProperties.toMap)
+
+    catalog.client.createTable(hiveTable, ignoreIfExists = true)
   }
 
   override def createRelation(sqlContext: SQLContext,
