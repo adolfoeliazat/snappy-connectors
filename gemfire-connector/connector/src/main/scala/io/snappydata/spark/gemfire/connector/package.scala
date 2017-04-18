@@ -53,6 +53,9 @@ package object connector {
   implicit def toGemFirePairRDDFunctions[K: ClassTag, V: ClassTag]
   (self: RDD[(K, V)]): GemFirePairRDDFunctions[K, V] = new GemFirePairRDDFunctions(self)
 
+  implicit def toGemFireRDDFunctions[T: ClassTag]
+  (self: RDD[T]): GemFireRDDFunctions[T] = new GemFireRDDFunctions(self)
+
 
   implicit def toGemFireRowRDDFunctions
   (self: DataFrame): GemFireDataFrameFunctions = new GemFireDataFrameFunctions(self)
