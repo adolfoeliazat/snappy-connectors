@@ -26,6 +26,7 @@ import com.gemstone.gemfire.cache.execute.FunctionException;
 import com.gemstone.gemfire.cache.execute.ResultSender;
 import com.gemstone.gemfire.cache.query.Query;
 import com.gemstone.gemfire.cache.query.SelectResults;
+import com.gemstone.gemfire.cache.query.Struct;
 import com.gemstone.gemfire.internal.HeapDataOutputStream;
 import com.gemstone.gemfire.internal.cache.LocalRegion;
 import com.gemstone.gemfire.internal.cache.execute.InternalRegionFunctionContext;
@@ -73,6 +74,7 @@ public class QueryFunction implements Function {
       String[] args = (String[])context.getArguments();
       String queryString = args[0];
       String bucketSet = args[1];
+      boolean returnRaw = Boolean.valueOf(args[2]);
       InternalRegionFunctionContext irfc = (InternalRegionFunctionContext)context;
       LocalRegion localRegion = (LocalRegion)irfc.getDataSet();
       boolean partitioned = localRegion.getDataPolicy().withPartitioning();
@@ -80,14 +82,28 @@ public class QueryFunction implements Function {
       Object result = partitioned ? query.execute((InternalRegionFunctionContext)context) : query.execute();
       ResultSender<Object> sender = context.getResultSender();
       HeapDataOutputStream buf = new HeapDataOutputStream(CHUNK_SIZE, null);
-      Iterator<Object> iter = ((SelectResults)result).asList().iterator();
-      while (iter.hasNext()) {
-        Object row = iter.next();
-        DataSerializer.writeObject(row, buf);
-        if (buf.size() > CHUNK_SIZE) {
-          sender.sendResult(buf.toByteArray());
-          logger.debug("OQL query=" + queryString + " bucket set=" + bucketSet + " sendResult(), data size=" + buf.size());
-          buf.reset();
+      SelectResults sr = (SelectResults)result;
+      boolean isStruct = sr.getCollectionType().getElementType().isStructType();
+      Iterator<Object> iter = sr.asList().iterator();
+      if(returnRaw && isStruct) {
+        while (iter.hasNext()) {
+          Object row = ((Struct)iter.next()).getFieldValues();
+          DataSerializer.writeObject(row, buf);
+          if (buf.size() > CHUNK_SIZE) {
+            sender.sendResult(buf.toByteArray());
+            logger.debug("OQL query=" + queryString + " bucket set=" + bucketSet + " sendResult(), data size=" + buf.size());
+            buf.reset();
+          }
+        }
+      } else {
+        while (iter.hasNext()) {
+          Object row = iter.next();
+          DataSerializer.writeObject(row, buf);
+          if (buf.size() > CHUNK_SIZE) {
+            sender.sendResult(buf.toByteArray());
+            logger.debug("OQL query=" + queryString + " bucket set=" + bucketSet + " sendResult(), data size=" + buf.size());
+            buf.reset();
+          }
         }
       }
       sender.lastResult(buf.toByteArray());

@@ -21,7 +21,7 @@ import scala.reflect.ClassTag
 import io.snappydata.spark.gemfire.connector.GemFireConnection
 import io.snappydata.spark.gemfire.connector.internal.gemfirefunctions.shared.RegionMetadata
 
-import org.apache.spark.{Logging, Partition}
+import org.apache.spark.{Logging, Partition, SparkContext}
 
 /**
   * A GeodeRDD partitioner is used to partition the region into multiple RDD partitions.
@@ -31,8 +31,8 @@ trait GemFireRDDPartitioner extends Serializable {
   def name: String
 
   /** the function that generates partitions */
-  def partitions[K: ClassTag, V: ClassTag]
-  (conn: GemFireConnection, md: RegionMetadata, env: Map[String, String]): Array[Partition]
+  def partitions (conn: GemFireConnection, md: RegionMetadata, env: Map[String, String],
+      sparkContext: Option[SparkContext]): Array[Partition]
 }
 
 object GemFireRDDPartitioner extends Logging {

@@ -125,7 +125,21 @@ key | value
 
 NEXT_STEP_NAME : END
 
+### Save a DataFrame into GemFire
+To save a DataFrame ( i.e DataSet of Row objects) into GemFire, use the following API, available as an implicit definition
 ```
+DataFrame.saveToGemFire[K](
+      regionPath: String,
+      keyExtractor: Row => K,
+      opConf: Map[String, String] = Map.empty)
+      ```
+ Here K refers to the type of Key instance which will be used in  GemFire for storing the data.
+ keyExtractor is a function which generates key of type K , for every Row object. The parameter current Row is  made available to the extractor function.
+```      
+testDF.saveToGemFire[Long]("gemTable1", row => row.getAs("id").asInstanceOf[Long]) 
+```
+
+When a DataFrame is saved into a Region, in the GemFire region the value is stored as Object [ ]. This needs to be taken into consideration when directly operating on the region, in the GemFire cluster
 
 ### Expose GemFire Region As RDD
 The same API is used to expose both replicated and partitioned region as RDDs. 

@@ -18,6 +18,8 @@ package io.snappydata.spark.gemfire.connector.internal.gemfirefunctions
 
 import java.util.concurrent.{BlockingQueue, LinkedBlockingQueue, TimeUnit}
 
+import scala.reflect.{ClassTag, classTag}
+
 import com.gemstone.gemfire.DataSerializer
 import com.gemstone.gemfire.cache.execute.ResultCollector
 import com.gemstone.gemfire.cache.query.internal.types.StructTypeImpl
@@ -25,7 +27,6 @@ import com.gemstone.gemfire.cache.query.types.StructType
 import com.gemstone.gemfire.distributed.DistributedMember
 import com.gemstone.gemfire.internal.ByteArrayDataInput
 import com.gemstone.gemfire.internal.shared.Version
-
 import io.snappydata.spark.gemfire.connector.internal.gemfirefunctions.shared.StructStreamingResult._
 
 /**
@@ -36,18 +37,19 @@ import io.snappydata.spark.gemfire.connector.internal.gemfirefunctions.shared.St
   * start processing the arrived result without waiting for full result to
   * become available.
   */
-class StructStreamingResultCollector(desc: String) extends ResultCollector[Array[Byte],
-    Iterator[Array[Object]]]  {
+class ConnectorStreamingResultCollector[T: ClassTag](desc: String) extends
+    ResultCollector[Array[Byte], Iterator[T]] {
 
+  private val isValOnly = !classTag[T].runtimeClass.isArray
   /**
     * Note: The data is sent in chunks, and each chunk contains multiple
     * records. So the result iterator is an iterator (I) of iterator (II),
     * i.e., go through each chunk (iterator (I)), and for each chunk, go
     * through each record (iterator (II)).
     */
-  private lazy val resultIterator = new Iterator[Array[Object]] {
+  private lazy val resultIterator = new Iterator[T] {
 
-    private var currentIterator: Iterator[Array[Object]] = nextIterator()
+    private var currentIterator: Iterator[T] = nextIterator()
 
     override def hasNext: Boolean = {
       if (!currentIterator.hasNext && currentIterator != Iterator.empty) {
@@ -57,7 +59,7 @@ class StructStreamingResultCollector(desc: String) extends ResultCollector[Array
     }
 
     /** Note: make sure call `hasNext` first to adjust `currentIterator` */
-    override def next(): Array[Object] = currentIterator.next()
+    override def next(): T = currentIterator.next()
   }
   private val queue: BlockingQueue[Array[Byte]] = new LinkedBlockingQueue[Array[Byte]]()
   var structType: StructType = null
@@ -70,9 +72,9 @@ class StructStreamingResultCollector(desc: String) extends ResultCollector[Array
 
   /** ------------------------------------------ */
 
-  override def getResult: Iterator[Array[Object]] = resultIterator
+  override def getResult: Iterator[T] = resultIterator
 
-  override def getResult(timeout: Long, unit: TimeUnit): Iterator[Array[Object]] =
+  override def getResult(timeout: Long, unit: TimeUnit): Iterator[T] =
     throw new UnsupportedOperationException()
 
   /** addResult add non-empty byte array (chunk) to the queue */
@@ -94,12 +96,12 @@ class StructStreamingResultCollector(desc: String) extends ResultCollector[Array
 
   def getResultType: StructType = {
     // trigger lazy resultIterator initialization if necessary
-    if (structType == null) resultIterator.hasNext
+    if (!isValOnly && structType == null) resultIterator.hasNext
     structType
   }
 
   /** get the iterator for the next chunk of data */
-  private def nextIterator(): Iterator[Array[Object]] = {
+  private def nextIterator(): Iterator[T] = {
     val chunk: Array[Byte] = queue.take
     if (chunk.isEmpty) {
       Iterator.empty
@@ -116,8 +118,8 @@ class StructStreamingResultCollector(desc: String) extends ResultCollector[Array
           nextIterator()
         case DATA_CHUNK =>
           // require(structType != null && structType.getFieldNames.length > 0)
-          if (structType == null) structType = KeyValueType
-          chunkToIterator(input, structType.getFieldNames.length)
+          if (!isValOnly && structType == null) structType = KeyValueType
+          chunkToIterator(input, if (isValOnly) 0 else structType.getFieldNames.length)
         case ERROR_CHUNK =>
           val error = DataSerializer.readObject(input).asInstanceOf[Exception]
           errorPropagationIterator(error)
@@ -127,37 +129,46 @@ class StructStreamingResultCollector(desc: String) extends ResultCollector[Array
   }
 
   /** create a iterator that propagate sender's exception */
-  private def errorPropagationIterator(ex: Exception) = new Iterator[Array[Object]] {
+  private def errorPropagationIterator(ex: Exception) = new Iterator[T] {
     val re = new RuntimeException(ex)
 
     override def hasNext: Boolean = throw re
 
-    override def next(): Array[Object] = throw re
+    override def next(): T = throw re
   }
 
   /** convert a chunk of data to an iterator */
-  private def chunkToIterator(input: ByteArrayDataInput, rowSize: Int) =
-  new Iterator[Array[Object]] {
+  private def chunkToIterator(input: ByteArrayDataInput, rowSize: Int) = new Iterator[T] {
     override def hasNext: Boolean = input.available() > 0
 
     val tmpInput = new ByteArrayDataInput()
 
-    override def next(): Array[Object] =
-      (0 until rowSize).map { ignore =>
-        val b = input.readByte()
-        b match {
-          case SER_DATA =>
-            val arr: Array[Byte] = DataSerializer.readByteArray(input)
-            tmpInput.initialize(arr, Version.CURRENT)
-            DataSerializer.readObject(tmpInput).asInstanceOf[Object]
-          case UNSER_DATA =>
-            DataSerializer.readObject(input).asInstanceOf[Object]
-          case BYTEARR_DATA =>
-            DataSerializer.readByteArray(input).asInstanceOf[Object]
-          case _ =>
-            throw new RuntimeException(s"unknown data type $b")
-        }
-      }.toArray
+    override def next(): T = {
+
+      if (rowSize > 0) {
+        (0 until rowSize).map { ignore =>
+          readObject
+        }.toArray.asInstanceOf[T]
+      } else {
+        readObject.asInstanceOf[T]
+      }
+    }
+
+    private def readObject: Object = {
+      val b = input.readByte()
+      b match {
+        case SER_DATA =>
+          val arr: Array[Byte] = DataSerializer.readByteArray(input)
+          tmpInput.initialize(arr, Version.CURRENT)
+          DataSerializer.readObject(tmpInput).asInstanceOf[Object]
+        case UNSER_DATA =>
+          DataSerializer.readObject(input).asInstanceOf[Object]
+        case BYTEARR_DATA =>
+          DataSerializer.readByteArray(input).asInstanceOf[Object]
+        case _ =>
+          throw new RuntimeException(s"unknown data type $b")
+      }
+    }
   }
 
 }

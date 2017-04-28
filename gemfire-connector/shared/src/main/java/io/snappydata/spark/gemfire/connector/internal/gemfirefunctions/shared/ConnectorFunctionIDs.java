@@ -22,4 +22,5 @@ public interface ConnectorFunctionIDs {
   String QueryFunction_ID = "gemfire-spark-query-function";
   String RetrieveRegionFunction_ID = "spark-gemfire-retrieve-region";
   String RetrieveRegionMetadataFunction_ID = "gemfire-spark-retrieve-region-metadata";
+  String RegionCountFunction_ID = "gemfire-spark-region-count";
 }

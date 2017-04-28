@@ -27,7 +27,7 @@ import com.gemstone.gemfire.cache.query.internal.StructImpl
 import com.gemstone.gemfire.distributed.internal.DistributionConfig
 import io.snappydata.spark.gemfire.connector._
 import io.snappydata.spark.gemfire.connector.internal.DefaultGemFireConnectionManager
-import io.snappydata.spark.gemfire.connector.internal.oql.{QueryRDD, RDDConverter}
+import io.snappydata.spark.gemfire.connector.internal.oql.RDDConverter
 import ittest.io.snappydata.spark.gemfire.connector.testkit.{GemFireCluster, IOUtils}
 import org.scalatest.{BeforeAndAfterAll, FunSuite, Matchers}
 

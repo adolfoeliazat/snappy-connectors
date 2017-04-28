@@ -84,13 +84,14 @@ public class RetrieveRegionFunction implements Function {
     String[] args = (String[])context.getArguments();
     String where = args[0];
     String taskDesc = args[1];
+    int keyLength = Integer.parseInt(args[2]);
     InternalRegionFunctionContext irfc = (InternalRegionFunctionContext)context;
     LocalRegion localRegion = (LocalRegion)irfc.getDataSet();
     boolean partitioned = localRegion.getDataPolicy().withPartitioning();
     if (where.trim().isEmpty())
-      retrieveFullRegion(irfc, partitioned, taskDesc);
+      retrieveFullRegion(irfc, partitioned, taskDesc, keyLength);
     else
-      retrieveRegionWithWhereClause(irfc, localRegion, partitioned, where, taskDesc);
+      retrieveRegionWithWhereClause(irfc, localRegion, partitioned, where, taskDesc, keyLength);
   }
 
   /** ------------------------------------------ */
@@ -100,22 +101,34 @@ public class RetrieveRegionFunction implements Function {
    */
 
   private void retrieveRegionWithWhereClause(
-      InternalRegionFunctionContext context, LocalRegion localRegion, boolean partitioned, String where, String desc) {
+      InternalRegionFunctionContext context, LocalRegion localRegion, boolean partitioned, String where,
+      String desc, int keyLength) {
     String regionPath = localRegion.getFullPath();
-    String qstr = "select key, value from " + regionPath + ".entries where " + where;
+    String qstr = "";
+    if( keyLength == 0) {
+      qstr = "select * from " + regionPath + " where " + where;
+    } else {
+      qstr = "select key, value from " + regionPath + ".entries where " + where;
+    }
     logger.info(desc + ": " + qstr);
 
     try {
       Cache cache = CacheFactory.getAnyInstance();
       QueryService queryService = cache.getQueryService();
       Query query = queryService.newQuery(qstr);
-      SelectResults<Struct> results =
-          (SelectResults<Struct>)(partitioned ? query.execute(context) : query.execute());
-
-      Iterator<Object[]> entries = getStructIteratorWrapper(results.asList().iterator());
+      SelectResults<?> results = (SelectResults<?>)(partitioned ? query.execute(context) : query.execute());
       InternalResultSender irs = (InternalResultSender)context.getResultSender();
-      StructStreamingResultSender sender = new StructStreamingResultSender(irs, null, entries, desc);
-      sender.send();
+      if(keyLength == 0) {
+        ConnectionStreamingResultSender sender = new ConnectionStreamingResultSender<>(irs, null,
+            ((SelectResults<Object>)results).asList().iterator(), desc, true);
+        sender.send();
+      } else {
+        Iterator<Object[]> entries = getStructIteratorWrapper(((SelectResults<Struct>)results).asList().iterator());
+        ConnectionStreamingResultSender sender = new ConnectionStreamingResultSender<>(irs, null,
+            entries, desc, false);
+        sender.send();
+      }
+
     } catch (Exception e) {
       throw new FunctionException(e);
     }
@@ -136,21 +149,33 @@ public class RetrieveRegionFunction implements Function {
    * ------------------------------------------
    */
 
-  private void retrieveFullRegion(InternalRegionFunctionContext context, boolean partitioned, String desc) {
-    Iterator<Object[]> entries;
+   private  void retrieveFullRegion(InternalRegionFunctionContext context, boolean partitioned,
+      String desc, int keyLength) {
+    Iterator<?> dataIter;
     if (partitioned) {
-      PREntriesIterator<Region.Entry> iter = (PREntriesIterator<Region.Entry>)
-          ((LocalDataSet)PartitionRegionHelper.getLocalDataForContext(context)).entrySet().iterator();
-      // entries = getPREntryIterator(iter);
-      entries = getSimpleEntryIterator(iter);
+      if(keyLength == 0) {
+        dataIter =((LocalDataSet)PartitionRegionHelper.getLocalDataForContext(context)).values().iterator();
+
+      } else {
+        PREntriesIterator<Region.Entry> iter = (PREntriesIterator<Region.Entry>)
+            ((LocalDataSet)PartitionRegionHelper.getLocalDataForContext(context)).entrySet().iterator();
+
+        dataIter = getSimpleEntryIterator(iter);
+      }
     } else {
       LocalRegion owner = (LocalRegion)context.getDataSet();
-      Iterator<Region.Entry> iter = (Iterator<Region.Entry>)owner.entrySet().iterator();
-      // entries = getRREntryIterator(iter, owner);
-      entries = getSimpleEntryIterator(iter);
+      if (keyLength == 0) {
+        dataIter = owner.values().iterator();
+      } else {
+        Iterator<Region.Entry> iter =(Iterator<Region.Entry>)owner.entrySet().iterator();
+        // entries = getRREntryIterator(iter, owner);
+        dataIter = getSimpleEntryIterator(iter);
+      }
     }
     InternalResultSender irs = (InternalResultSender)context.getResultSender();
-    StructStreamingResultSender sender = new StructStreamingResultSender(irs, null, entries, desc);
+    ConnectionStreamingResultSender<?> sender = keyLength == 0 ?
+        new ConnectionStreamingResultSender<>(irs, null, (Iterator<Object>)dataIter, desc, keyLength == 0):
+      new ConnectionStreamingResultSender<>(irs, null, (Iterator<Object[]>)dataIter, desc, keyLength == 0);
     sender.send();
   }
 

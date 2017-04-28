@@ -14,27 +14,15 @@
  * permissions and limitations under the License. See accompanying
  * LICENSE file.
  */
-package io.snappydata.spark.gemfire.connector.internal.oql
 
-import com.gemstone.gemfire.cache.query.internal.StructImpl
+package io.snappydata.spark.gemfire.connector.internal.rdd
 
-import org.apache.spark.rdd.RDD
-import org.apache.spark.sql._
+import scala.reflect.ClassTag
 
-class RowBuilder[T](queryRDD: RDD[T]) {
+import org.apache.spark.TaskContext
 
-  /**
-    * Convert QueryRDD to RDD of Row
-    *
-    * @return RDD of Rows
-    */
-  def toRowRDD(): RDD[Row] = {
-    val rowRDD = queryRDD.map(row => {
-      row match {
-        case si: StructImpl => Row.fromSeq(si.getFieldValues)
-        case obj: Object => Row.fromSeq(Seq(obj))
-      }
-    })
-    rowRDD
-  }
+
+package object behaviour {
+  type ComputeLogic[K, V, T] = (GemFireRegionRDD[K, V, T],
+      GemFireRDDPartition, TaskContext) => Iterator[T]
 }

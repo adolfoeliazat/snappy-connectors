@@ -37,7 +37,7 @@ class StructStreamingResultSenderAndCollectorTest extends FunSuite with BeforeAn
   val TwoColType = new StructTypeImpl(Array("key", "value"), Array(objType, objType))
   val OneColType = new StructTypeImpl(Array("value"), Array(objType))
   /** common variables */
-  var collector: StructStreamingResultCollector = _
+  var collector: ConnectorStreamingResultCollector = _
   var baseSender: LocalResultSender = _
 
   def verifySimpleTransfer(sendDataType: Boolean): Unit = {
@@ -58,7 +58,7 @@ class StructStreamingResultSenderAndCollectorTest extends FunSuite with BeforeAn
   }
 
   before {
-    collector = new StructStreamingResultCollector
+    collector = new ConnectorStreamingResultCollector
     baseSender = new LocalResultSender(collector, 1)
   }
 

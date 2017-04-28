@@ -21,6 +21,7 @@ import scala.reflect.ClassTag
 import io.snappydata.spark.gemfire.connector.internal.rdd.GemFireRegionRDD
 
 import org.apache.spark.SparkContext
+import org.apache.spark.rdd.RDD
 
 /** Provides Geode specific methods on `SparkContext` */
 class GemFireSparkContextFunctions(@transient sc: SparkContext) extends Serializable {
@@ -34,7 +35,7 @@ class GemFireSparkContextFunctions(@transient sc: SparkContext) extends Serializ
     */
   def gemfireRegion[K: ClassTag, V: ClassTag](
       regionPath: String,
-      opConf: Map[String, String] = Map.empty): GemFireRegionRDD[K, V] =
-  GemFireRegionRDD[K, V](sc, regionPath, opConf)
+      opConf: Map[String, String] = Map.empty): RDD[(K, V)] =
+  GemFireRegionRDD.exposeRegion[K, V](sc, regionPath, opConf)
 
 }

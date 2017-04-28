@@ -21,9 +21,10 @@ import scala.collection.mutable.ListBuffer
 import com.gemstone.gemfire.cache.query.internal.StructImpl
 
 import org.apache.spark.Logging
+import org.apache.spark.rdd.RDD
 import org.apache.spark.sql.types._
 
-class SchemaBuilder[T](queryRDD: QueryRDD[T]) extends Logging {
+class SchemaBuilder[T](queryRDD: RDD[T]) extends Logging {
 
   val nullStructType = StructType(Nil)
 
@@ -58,7 +59,7 @@ class SchemaBuilder[T](queryRDD: QueryRDD[T]) extends Logging {
     tpe
   }
 
-  def constructFromStruct(r: StructImpl) = {
+  def constructFromStruct(r: StructImpl): StructType = {
     val names = r.getFieldNames
     val values = r.getFieldValues
     val lb = new ListBuffer[StructField]()

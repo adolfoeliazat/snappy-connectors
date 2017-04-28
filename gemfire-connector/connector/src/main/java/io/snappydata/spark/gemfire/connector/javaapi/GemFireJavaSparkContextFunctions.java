@@ -52,7 +52,8 @@ public class GemFireJavaSparkContextFunctions {
 
     ClassTag<K> kt = fakeClassTag();
     ClassTag<V> vt = fakeClassTag();
-    GemFireRegionRDD<K, V> rdd = GemFireRegionRDD$.MODULE$.apply(
+
+    GemFireRegionRDD<K, V, scala.Tuple2<K, V>> rdd = GemFireRegionRDD$.MODULE$.exposeRegion(
         sc, regionPath, propertiesToScalaMap(opConf), kt, vt);
     return new GemFireJavaRegionRDD<>(rdd);
   }

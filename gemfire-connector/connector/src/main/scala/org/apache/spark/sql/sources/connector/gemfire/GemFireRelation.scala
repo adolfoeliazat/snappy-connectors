@@ -7,18 +7,20 @@ package org.apache.spark.sql.sources.connector.gemfire
 
 import java.beans.Introspector
 
-import scala.reflect.ClassTag
+import scala.reflect.{ClassTag, classTag}
 
-import io.snappydata.spark.gemfire.connector.internal.rdd.GemFireRegionRDD
+import io.snappydata.spark.gemfire.connector.internal.DefaultGemFireConnectionManager
+import io.snappydata.spark.gemfire.connector.internal.rdd.behaviour.ComputeLogic
+import io.snappydata.spark.gemfire.connector.internal.rdd.{GemFireRDDPartition, GemFireRegionRDD}
 
+import org.apache.spark.TaskContext
 import org.apache.spark.rdd.RDD
 import org.apache.spark.sql.catalyst.expressions.{Attribute, AttributeReference, GenericRow}
 import org.apache.spark.sql.catalyst.{CatalystTypeConverters, JavaTypeInference}
 import org.apache.spark.sql.collection.{Utils => OtherUtils}
 import org.apache.spark.sql.execution.columnar.ExternalStoreUtils.CaseInsensitiveMutableHashMap
-import org.apache.spark.sql.row.GemFireXDDialect
 import org.apache.spark.sql.sources._
-import org.apache.spark.sql.types._
+import org.apache.spark.sql.types.{StructType, _}
 import org.apache.spark.sql.{SQLContext, SaveMode, SnappyContext, _}
 import org.apache.spark.util.{Utils => MainUtils}
 
@@ -26,7 +28,7 @@ case class GemFireRelation(@transient override val sqlContext: SnappyContext, re
     primaryKeyColumnName: Option[String], valueColumnName: Option[String],
     keyConstraint: Option[String], valueConstraint: Option[String],
     providedSchema: Option[StructType], val asSelect: Boolean)
-    extends BaseRelation with TableScan with SchemaInsertableRelation {
+    extends BaseRelation with TableScan with SchemaInsertableRelation with PrunedFilteredScan {
 
 
   private val keyTag = ClassTag[Any](keyConstraint.map(MainUtils.classForName(_)).
@@ -35,31 +37,11 @@ case class GemFireRelation(@transient override val sqlContext: SnappyContext, re
       getOrElse(classOf[Any]))
 
 
-
-  override def buildScan(): RDD[Row] = {
-    val rdd = GemFireRegionRDD(sqlContext.sparkContext, regionPath,
-      Map.empty[String, String])(keyTag, valueTag)
-    rdd.mapPartitions(iter => {
-      val keyClass = keyConstraint.map(MainUtils.classForName(_))
-      val valueClass = valueConstraint.map(MainUtils.classForName(_))
-      val (totalSize, keyConverter, valueConverter) = GemFireRelation.getLengthAndConverters(
-        keyClass, valueClass, rowObjectLength)
-      iter.map { case (k, v) => {
-        val array = Array.ofDim[Any](totalSize)
-        keyConverter(k, array)
-        valueConverter(v, array)
-        new GenericRow(array): Row
-
-      }
-      }
-    }, true)
-  }
-
   val inferredKeySchema = StructType(keyConstraint.map(x => {
     val (inferedKeyType, nullableKey) = JavaTypeInference.inferDataType(keyTag.runtimeClass)
     convertDataTypeToStructFields(inferedKeyType, nullableKey,
-      primaryKeyColumnName.getOrElse(Constants.defaultKeyColumnName))
-  }).getOrElse(Array.empty[StructField]) )
+      primaryKeyColumnName.getOrElse(Constants.defaultKeyColumnName), providedSchema)
+  }).getOrElse(Array.empty[StructField]))
 
   val rowObjectLength: Option[Int] = if (classOf[Row].isAssignableFrom(valueTag.runtimeClass)) {
     if (providedSchema.isDefined) {
@@ -81,75 +63,181 @@ case class GemFireRelation(@transient override val sqlContext: SnappyContext, re
     None
   }
 
-  val inferredValueSchema = rowObjectLength.map( _ => StructType(
-    providedSchema.get.drop(inferredKeySchema.length))).getOrElse(
-    StructType(valueConstraint.map(x => {
-      val (inferedValType, nullableValue) = JavaTypeInference.
-          inferDataType(valueTag.runtimeClass)
-      convertDataTypeToStructFields(inferedValType, nullableValue,
-        valueColumnName.getOrElse(Constants.defaultValueColumnName))
-    }).getOrElse(Array.empty[StructField]))
+  val computeRegionAsRows = (rdd: GemFireRegionRDD[Any, Any, Row]) => {
+    GemFireRelation.computeForRegionAsRows[Any, Any](Some(rdd.kClassTag.runtimeClass.getName),
+      Some(rdd.vClassTag.runtimeClass.getName), rdd.rowObjectLength)
+  }
+
+
+  val computeOQLAsRows = (rdd: GemFireRegionRDD[Any, Any, Row]) => {
+    GemFireRelation.computeForOQL[Row]
+  }
+
+
+  val computeForCount = (rdd: GemFireRegionRDD[Any, Any, Row]) => GemFireRelation.computeForCount
+
+  override def buildScan(): RDD[Row] = new GemFireRegionRDD[Any, Any, Row](sqlContext.sparkContext,
+    Some(regionPath), computeRegionAsRows, Map.empty[String, String],
+    rowObjectLength)(keyTag, valueTag, classTag[Row])
+
+
+  val inferredValueSchema = providedSchema.map(st =>
+    StructType(st.drop(inferredKeySchema.length))).getOrElse(
+    {
+      if (rowObjectLength.isDefined) {
+        throw OtherUtils.analysisException(s" schema needs to be provided for" +
+            s" Row objects in GemFire")
+      }
+      StructType(valueConstraint.map(x => {
+        val (inferedValType, nullableValue) = JavaTypeInference.
+            inferDataType(valueTag.runtimeClass)
+        convertDataTypeToStructFields(inferedValType, nullableValue,
+          valueColumnName.getOrElse(Constants.defaultValueColumnName), None)
+      }).getOrElse(Array.empty[StructField]))
+    }
   )
 
 
-
-  // private val inferredSchema = inferredKeySchema.merge(inferredValueSchema)
-
   override val schema = providedSchema.getOrElse(inferredKeySchema.merge(inferredValueSchema))
 
-
-  /*
-  override val schema = {
-    def checkDataTypeMismatch(field1: StructField, field2: StructField): Boolean = {
-      if (field1.dataType.equals(field2.dataType)) {
-        false
+  private def conditionOQLAttributeForCaseRow(attribName: String,
+      spansOnlyValue: Boolean): String = {
+    val index = this.inferredValueSchema.indexWhere(sf =>
+      sf.name.equalsIgnoreCase(attribName))
+    if (index != -1) {
+      if (spansOnlyValue) {
+        s"x[$index]"
       } else {
-        val isField1Struct = field1.dataType match {
-          case _: StructType => true
-          case _ => false
-        }
-
-        val isField2Struct = field2.dataType match {
-          case _: StructType => true
-          case _ => false
-        }
-
-        if (isField1Struct && isField2Struct) {
-          val structField1 = field1.dataType.asInstanceOf[StructType]
-          val structField2 = field2.dataType.asInstanceOf[StructType]
-          structField1.zip(structField2).exists(pair => checkDataTypeMismatch(pair._1, pair._2))
+        s"x.getValue()[$index]"
+      }
+    } else {
+      if (spansOnlyValue) {
+        throw OtherUtils.analysisException(s" column name $attribName not found in schema")
+      } else {
+        // chcek in the keys
+        val index = this.inferredKeySchema.indexWhere(sf =>
+          sf.name.equalsIgnoreCase(attribName))
+        if (index != -1) {
+          s"x.getKey()" + (if (this.inferredKeySchema.size == 1) "" else s".$attribName")
         } else {
-          true
+          throw OtherUtils.analysisException(s" column name $attribName not found in schema")
         }
       }
     }
-    providedSchema.map(ps => {
-      // check if the data types of inferred schema & provided schema match
-      if (inferredSchema.size != providedSchema.size ||
-          inferredSchema.zip(ps).exists(pair => checkDataTypeMismatch(pair._1, pair._2))) {
-        throw OtherUtils.analysisException("The data types of provided schema & " +
-            "inferred schema do not match")
+  }
+
+  private def conditionOQLAttributeForCaseDomain(attribName: String,
+      spansOnlyValue: Boolean): String = {
+    val index = this.inferredValueSchema.indexWhere(sf =>
+      sf.name.equalsIgnoreCase(attribName))
+    if (index != -1) {
+      if (spansOnlyValue) {
+        "x"
+      } else {
+        "x.getValue"
+      } + (if (this.inferredValueSchema == 1) "" else s".$attribName")
+    } else {
+      if (spansOnlyValue) {
+        throw OtherUtils.analysisException(s" column name $attribName not found in schema")
+      } else {
+        // chcek in the keys
+        val index = this.inferredKeySchema.indexWhere(sf =>
+          sf.name.equalsIgnoreCase(attribName))
+        if (index != -1) {
+          s"x.getKey()" + (if (this.inferredKeySchema.size == 1) "" else s".$attribName")
+        } else {
+          throw OtherUtils.analysisException(s" column name $attribName not found in schema")
+        }
       }
-      else ps
-    }).getOrElse(inferredSchema)
+    }
+    s"x.$attribName"
+  }
+
+  private def getProjectionString(requiredColumns: Array[String],
+      spansOnlyValue: Boolean): String = {
+    if (requiredColumns.isEmpty) {
+      " 1 "
+    } else if (rowObjectLength.isDefined) {
+      // the data stored in region is Object[]
+      // Map the required columns to the indices of array
+      requiredColumns.map(name => {
+        conditionOQLAttributeForCaseRow(name, spansOnlyValue)
+      }).mkString(",")
+    } else {
+      requiredColumns.map(name => {
+        conditionOQLAttributeForCaseDomain(name, spansOnlyValue)
+      }).mkString(",")
+    }
 
   }
-  */
 
-  // create a dummy table in GemXD
-  /*
-  this.createGemXDTable()
+  private def getFilterString(filters: Array[Filter],
+      spansOnlyValue: Boolean): String = {
+    val valueConverter = (attributeName: String, value: Any) => {
+      val dataType = this.schema.find(x =>
+        x.name.equalsIgnoreCase(attributeName)).get.dataType
+      GemFireRelation.convertToOQLString(dataType, value)
+    }
+
+    val (attribConverter) = if (rowObjectLength.isDefined) {
+      (attributeName: String) => {
+        conditionOQLAttributeForCaseRow(attributeName, spansOnlyValue)
+      }
+    } else {
+      (attributeName: String) => {
+        conditionOQLAttributeForCaseDomain(attributeName, spansOnlyValue)
+
+      }
+    }
+
+    filters.map(GemFireRelation.filterConverter(_)(attribConverter,
+      valueConverter)).mkString(" and ")
+  }
 
 
-  def createGemXDTable(): Unit = {
-    /*
-    val sqlStr = s"create table $regionPath " +
-        JdbcExtendedUtils.schemaString(schema, GemFireXDDialect)
-        */
-    sqlContext.createTable(regionPath, "row", schema, Map.empty[String, String], true)
+  private def convertToOQL(requiredColumns: Array[String], filters: Array[Filter],
+      spansOnlyValue: Boolean): String = {
+    val builder = new StringBuilder("select ").append(
+      getProjectionString(requiredColumns, spansOnlyValue)).append(" from /").append(regionPath).
+        append(if (spansOnlyValue) " as x " else ".entries as x")
+    if (filters.isEmpty) {
+      builder.toString()
+    } else {
+      builder.append(" where ").append(getFilterString(filters, spansOnlyValue)).toString()
+    }
 
   }
-*/
+
+  def buildScan(requiredColumns: Array[String], filters: Array[Filter]): RDD[Row] = {
+    val spansOnlyValue = this.inferredKeySchema.length == 0 || !requiredColumns.exists(x =>
+      this.inferredKeySchema.exists(sf => sf.name.equalsIgnoreCase(x)))
+    // Given the cols , identify if it spans only value or keys too
+    if (requiredColumns.isEmpty) {
+      // it is a count query
+      val whereClause = if (filters.isEmpty) {
+        None
+      } else if (spansOnlyValue) {
+        Some(getFilterString(filters, spansOnlyValue))
+      } else {
+        throw new UnsupportedOperationException("count query with where " +
+            "clause spannng keys not supported")
+      }
+      new GemFireRegionRDD[Any, Any, Row](sqlContext.sparkContext,
+        Some(regionPath), computeForCount, Map.empty[String, String], None, whereClause,
+        None)(keyTag, valueTag, classTag[Row])
+    } else if (requiredColumns.size == this.schema.size && filters.isEmpty &&
+        !requiredColumns.zip(schema).exists(tup => !tup._1.equalsIgnoreCase(tup._2.name))) {
+      this.buildScan()
+    } else {
+      val oql = convertToOQL(requiredColumns, filters, spansOnlyValue)
+      println(" oql executed = " + oql)
+      new GemFireRegionRDD[Any, Any, Row](sqlContext.sparkContext,
+        Some(regionPath), computeOQLAsRows, Map.empty[String, String], rowObjectLength, None,
+        Some(oql))(keyTag, valueTag, classTag[Row])
+    }
+
+  }
+
   override def insertableRelation(sourceSchema: Seq[Attribute]): Option[InsertableRelation] = None
 
   override def append(rows: RDD[Row], time: Long): Unit = {}
@@ -170,7 +258,7 @@ case class GemFireRelation(@transient override val sqlContext: SnappyContext, re
 
     if (valueConstraint.isEmpty) {
       val availableValueLength = sourceSchema.length - inferredKeyLength
-      if(availableValueLength != 1) {
+      if (availableValueLength != 1) {
         throw OtherUtils.analysisException("If the value fields in the Row object is more than 1," +
             " then domain class for GemFire Region value should be provided as a Bean")
       }
@@ -178,7 +266,7 @@ case class GemFireRelation(@transient override val sqlContext: SnappyContext, re
 
     val inferredValueLength = if (inferredValueSchema.length == 0) 1 else inferredValueSchema.length
 
-    if(inferredKeyLength + inferredValueLength != providedSchema.size) {
+    if (inferredKeyLength + inferredValueLength != providedSchema.size) {
       throw OtherUtils.analysisException("The source schema is not compatible with " +
           "the target schema")
     }
@@ -191,16 +279,114 @@ case class GemFireRelation(@transient override val sqlContext: SnappyContext, re
   }
 
   private def convertDataTypeToStructFields(dataType: DataType, nullable: Boolean,
-      defaultColumnName: String): Array[StructField] = {
+      singleFieldColumnName: String, providedSchema: Option[StructType]): Array[StructField] = {
+    // a provided shema will be of Some cas eonly for key. for value provided schema will be none
     dataType match {
-      case x: StructType => x.fields
-      case _ => Array(StructField(primaryKeyColumnName.getOrElse(defaultColumnName),
-        dataType, nullable))
+      case x: StructType => {
+        // if schema is provided we need to validate if it is correct for key
+        val isProvidedSchemaCorrect = providedSchema.map(st =>
+          StructType(st.dropRight(providedSchema.size - x.size)).equals(x)
+        ).getOrElse(true)
+        if (!isProvidedSchemaCorrect) {
+          throw OtherUtils.analysisException(s"The provided schema for" +
+              s" key is not consistent")
+        }
+        x.fields
+      }
+      case _ => providedSchema.map(st => Array(st(0))).getOrElse(
+        Array(StructField(singleFieldColumnName, dataType, nullable)))
     }
   }
 }
 
 object GemFireRelation {
+
+  val filterConverter: PartialFunction[Filter,
+      (String => String, (String, Any) => String) => String] = {
+    case EqualTo(attribute, value) => (x: String => String, y: (String, Any) => String) => {
+      s"${x(attribute)} = ${y(attribute, value)}"
+    }
+
+    case GreaterThan(attribute, value) => (x: String => String,
+        y: (String, Any) => String) => {
+      s"${x(attribute)} > ${y(attribute, value)}"
+    }
+
+    case GreaterThanOrEqual(attribute, value) => (x: String => String,
+        y: (String, Any) => String) => {
+      s"${x(attribute)} >= ${y(attribute, value)}"
+    }
+
+    case LessThan(attribute, value) => (x: String => String, y: (String, Any) => String) => {
+      s"${x(attribute)} < ${y(attribute, value)}"
+    }
+
+    case LessThanOrEqual(attribute, value) => (x: String => String,
+        y: (String, Any) => String) => {
+      s"${x(attribute)} <= ${y(attribute, value)}"
+    }
+
+    case IsNotNull(attribute) => (x: String => String,
+        y: (String, Any) => String) => {
+      s" ${x(attribute)} != null "
+    }
+
+    case Not(child) => {
+      val childConverter = filterConverter(child)
+      (_x: String => String, _y: (String, Any) => String) => {
+        s"!(${childConverter(_x, _y)})"
+      }
+    }
+
+    case And(left, right) => {
+      val leftFilter = filterConverter(left)
+      val rightFilter = filterConverter(right)
+      (_x: String => String, _y: (String, Any) => String) => {
+        s"${leftFilter(_x, _y)}  and ${rightFilter(_x, _y)}"
+      }
+    }
+
+    case Or(left, right) => {
+      val leftFilter = filterConverter(left)
+      val rightFilter = filterConverter(right)
+      (_x: String => String, _y: (String, Any) => String) =>
+        s"${leftFilter(_x, _y)}  or ${rightFilter(_x, _y)}"
+
+    }
+
+    case EqualNullSafe(attribute, value) => (x: String => String, y: (String, Any) => String) =>
+      s" ( (${x(attribute)} = null and  ${y(attribute, value)} == null)  or " +
+          s" ${x(attribute)} = ${y(attribute, value)})"
+
+    case In(attribute: String, values: Array[Any]) =>
+      (x: String => String, y: (String, Any) => String) =>
+        s"${x(attribute)} IN (${
+          values.map(y(attribute, _).mkString(","))
+        })"
+
+    case StringStartsWith(attribute: String, value: String) => (x: String => String,
+        y: (String, Any) => String) => {
+      s"${x(attribute)}.toString().startsWith(${y(attribute, value)})"
+    }
+
+    case StringEndsWith(attribute: String, value: String) => (x: String => String,
+        y: (String, Any) => String) => {
+      s"${x(attribute)}.toString().endsWith(${y(attribute, value)})"
+    }
+
+    case StringContains(attribute: String, value: String) => (x: String => String,
+        y: (String, Any) => String) => {
+      s"${x(attribute)}.toString().contains(${y(attribute, value)})"
+    }
+
+  }
+
+
+  def convertToOQLString(dataType: DataType, value: Any): String = dataType match {
+    case _: NumericType => value.toString
+    case _ => s"'${value.toString}'"
+  }
+
 
   private def getSchema(beanClass: Class[_]): Seq[AttributeReference] = {
     val (dataType, _) = JavaTypeInference.inferDataType(beanClass)
@@ -209,9 +395,10 @@ object GemFireRelation {
     }
   }
 
-  private def getLengthAndConverters(keyClass: Option[Class[_]],
+  // TODO: If the Key length of schema is 0, then reuse the value array
+  def getLengthAndConverters(keyClass: Option[Class[_]],
       valueClass: Option[Class[_]], rowObjectLength: Option[Int]):
-  (Int, (Any, Array[Any]) => Unit, (Any, Array[Any]) => Unit) = {
+  (Int, Int, (Any, Array[Any]) => Unit, (Any, Array[Any]) => Unit) = {
 
     val (keyLength, keyConverter) = keyClass.map(className => {
       val keyType = inferDataType(className)
@@ -225,12 +412,12 @@ object GemFireRelation {
     }).getOrElse((0, (e: Any, arr: Array[Any]) => {}))
 
 
-    val (valueLength, valueConverter) = rowObjectLength.map( length => {
+    val (valueLength, valueConverter) = rowObjectLength.map(length => {
       (length, (e: Any, array: Array[Any]) => {
-        val temp = e.asInstanceOf[Row]
-        Array.copy(temp.toSeq.toArray[Any], 0, array, keyLength, temp.length)
+        val temp = e.asInstanceOf[Array[Any]]
+        Array.copy(temp, 0, array, keyLength, temp.length)
       })
-    } ).getOrElse(
+    }).getOrElse(
       valueClass.map(className => {
 
         val valType = inferDataType(className)
@@ -244,7 +431,7 @@ object GemFireRelation {
       }
       ).getOrElse((0, (e: Any, arr: Array[Any]) => {}))
     )
-    (keyLength + valueLength, keyConverter, valueConverter)
+    (keyLength + valueLength, keyLength, keyConverter, valueConverter)
   }
 
 
@@ -316,6 +503,90 @@ object GemFireRelation {
       case _ => None
     }
 
+  }
+
+  def computeForRegionAsRows[K: ClassTag, V: ClassTag](keyConstraint: Option[String],
+      valueConstraint: Option[String], rowObjectLength: Option[Int]): ComputeLogic[K, V, Row] = {
+
+    new ComputeLogic[K, V, Row]() {
+      override def apply(rdd: GemFireRegionRDD[K, V, Row],
+          partition: GemFireRDDPartition, taskContext: TaskContext): Iterator[Row] = {
+        val keyClass = keyConstraint.map(MainUtils.classForName(_))
+        val valueClass = valueConstraint.map(MainUtils.classForName(_))
+        val (totalSize, keyLength, keyConverter, valueConverter) = GemFireRelation.
+            getLengthAndConverters(keyClass, valueClass, rowObjectLength)
+        val iter = DefaultGemFireConnectionManager.getConnection.
+            getRegionData[Any, Any](rdd.regionPath.get, rdd.whereClause, partition, keyLength)
+        if (keyLength == 0) {
+          iter.asInstanceOf[Iterator[Any]].map(v => {
+            val array = Array.ofDim[Any](totalSize)
+            valueConverter(v, array)
+            new GenericRow(array): Row
+          }
+          )
+        } else {
+          iter.asInstanceOf[Iterator[(Any, Any)]].map { case (k, v) => {
+            val array = Array.ofDim[Any](totalSize)
+            keyConverter(k, array)
+            valueConverter(v, array)
+            new GenericRow(array): Row
+          }
+
+          }
+        }
+      }
+    }
+  }
+
+
+  def computeForOQL[T]: ComputeLogic[Any, Any, T] = {
+    new ComputeLogic[Any, Any, T]() {
+      override def apply(rdd: GemFireRegionRDD[Any, Any, T],
+          partition: GemFireRDDPartition, taskContext: TaskContext): Iterator[T] = {
+        val buckets = partition.asInstanceOf[GemFireRDDPartition].bucketSet
+        val region = rdd.regionPath.getOrElse(rdd.oql.map(
+          GemFireRegionRDD.getRegionPathFromQuery(_)).
+            getOrElse(throw new IllegalStateException("Unknown region")))
+        val iter = DefaultGemFireConnectionManager.getConnection.
+            executeQuery(region, buckets, rdd.oql.get, rdd.regionPath.isDefined).
+            asInstanceOf[Iterator[Any]]
+        if (rdd.regionPath.isDefined) {
+          iter.map {
+            elem => elem match {
+              case arr: Array[AnyRef] => Row(arr: _*)
+              case _ => Row(elem)
+            }
+          }.asInstanceOf[Iterator[T]]
+        } else {
+          iter.asInstanceOf[Iterator[T]]
+        }
+
+      }
+    }
+  }
+
+
+  def computeForCount: ComputeLogic[Any, Any, Row] = {
+    new ComputeLogic[Any, Any, Row]() {
+      override def apply(rdd: GemFireRegionRDD[Any, Any, Row],
+          partition: GemFireRDDPartition, taskContext: TaskContext): Iterator[Row] = {
+        val buckets = partition.bucketSet
+        val rgnSize = DefaultGemFireConnectionManager.getConnection.
+            getCount(rdd.regionPath.get, buckets, rdd.whereClause)
+
+        new Iterator[Row]() {
+          var current = 0
+          val fixed = Row(1)
+
+          override def hasNext: Boolean = current < rgnSize
+
+          override def next(): Row = if (hasNext) {
+            current += 1
+            fixed
+          } else throw new NoSuchElementException
+        }
+      }
+    }
   }
 
 
@@ -395,7 +666,7 @@ final class DefaultSource
      }
      */
 
-     throw new UnsupportedOperationException("work in progress")
+    throw new UnsupportedOperationException("work in progress")
   }
 
 }

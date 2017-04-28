@@ -30,8 +30,9 @@ class QueryResultCollector extends ResultCollector[Array[Byte], Iterator[Object]
     private var currentIterator = nextIterator
 
     def hasNext = {
-      if (!currentIterator.hasNext && currentIterator != Iterator.empty)
+      if (!currentIterator.hasNext && currentIterator != Iterator.empty) {
         currentIterator = nextIterator
+      }
       currentIterator.hasNext
     }
 
@@ -39,18 +40,19 @@ class QueryResultCollector extends ResultCollector[Array[Byte], Iterator[Object]
   }
   private val queue = new LinkedBlockingDeque[Array[Byte]]()
 
-  override def getResult = resultIterator
+  override def getResult: Iterator[Object] = resultIterator
 
-  override def getResult(timeout: Long, unit: TimeUnit) = throw new UnsupportedOperationException
+  override def getResult(timeout: Long, unit: TimeUnit): Iterator[Object] =
+    throw new UnsupportedOperationException
 
-  override def addResult(memberID: DistributedMember, chunk: Array[Byte]) =
+  override def addResult(memberID: DistributedMember, chunk: Array[Byte]): Unit =
     if (chunk != null && chunk.size > 0) {
       queue.add(chunk)
     }
 
-  override def endResults = queue.add(Array.empty)
+  override def endResults: Unit = queue.add(Array.empty)
 
-  override def clearResults = queue.clear
+  override def clearResults: Unit = queue.clear
 
   private def nextIterator: Iterator[Object] = {
     val chunk = queue.take

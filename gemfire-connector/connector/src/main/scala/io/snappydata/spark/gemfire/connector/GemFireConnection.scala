@@ -18,9 +18,8 @@ package io.snappydata.spark.gemfire.connector
 
 import com.gemstone.gemfire.cache.Region
 import com.gemstone.gemfire.cache.query.Query
-import io.snappydata.spark.gemfire.connector.internal.gemfirefunctions.shared.RegionMetadata
 import io.snappydata.spark.gemfire.connector.internal.rdd.GemFireRDDPartition
-
+import io.snappydata.spark.gemfire.connector.internal.gemfirefunctions.shared.RegionMetadata
 
 trait GemFireConnection {
 
@@ -54,9 +53,11 @@ trait GemFireConnection {
     * @param whereClause : the set of bucket IDs
     * @param split       : Geode RDD Partition instance
     */
-  def getRegionData[K, V](regionPath: String, whereClause: Option[String], split: GemFireRDDPartition): Iterator[(K, V)]
+  def getRegionData[K, V](regionPath: String, whereClause: Option[String],
+      split: GemFireRDDPartition, keyLength: Int): Iterator[_]
 
-  def executeQuery(regionPath: String, bucketSet: Set[Int], queryString: String): Object
+  def executeQuery(regionPath: String, bucketSet: Set[Int],
+      queryString: String, returnRaw: Boolean): Object
 
   /**
     * Create a gemfire OQL query
@@ -64,6 +65,8 @@ trait GemFireConnection {
     * @param queryString Geode OQL query string
     */
   def getQuery(queryString: String): Query
+
+  def getCount(regionPath: String, buckets: Set[Int], whereClause: Option[String]): Int
 
   /** Close the connection */
   def close(): Unit

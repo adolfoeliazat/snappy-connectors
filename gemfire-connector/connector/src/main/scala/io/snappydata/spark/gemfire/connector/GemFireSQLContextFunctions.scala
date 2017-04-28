@@ -17,15 +17,18 @@
 package io.snappydata.spark.gemfire.connector
 
 
-import io.snappydata.spark.gemfire.connector.internal.oql.{OQLRelation, QueryRDD}
+import io.snappydata.spark.gemfire.connector.internal.oql.OQLRelation
+import io.snappydata.spark.gemfire.connector.internal.rdd.GemFireRegionRDD
 
 import org.apache.spark.Logging
+import org.apache.spark.sql.sources.connector.gemfire.GemFireRelation
 import org.apache.spark.sql.{DataFrame, SQLContext}
 
 /**
   * Provide Geode OQL specific functions
   */
-class GemFireSQLContextFunctions(@transient sqlContext: SQLContext) extends Serializable with Logging {
+class GemFireSQLContextFunctions(@transient sqlContext: SQLContext) extends
+    Serializable with Logging {
 
   /**
     * Expose a Geode OQL query result as a DataFrame
@@ -34,8 +37,17 @@ class GemFireSQLContextFunctions(@transient sqlContext: SQLContext) extends Seri
     */
   def gemfireOQL(query: String): DataFrame = {
     logInfo(s"OQL query = $query")
-    val rdd = new QueryRDD[Object](sqlContext.sparkContext, query)
+
+
+     val computeOQLCreator = (rdd: GemFireRegionRDD[Any, Any, Any]) => {
+        GemFireRelation.computeForOQL[Any]
+    }
+    val rdd = new GemFireRegionRDD[Any, Any, Any](sqlContext.sparkContext,
+      None, computeOQLCreator, Map.empty[String, String], None, None,
+      Some(query))
+
     sqlContext.baseRelationToDataFrame(OQLRelation(rdd)(sqlContext))
+
   }
 
 

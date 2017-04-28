@@ -21,7 +21,8 @@ import org.apache.spark.sql.sources.{BaseRelation, TableScan}
 import org.apache.spark.sql.types._
 import org.apache.spark.sql.{DataFrame, Row, SQLContext}
 
-case class OQLRelation[T](queryRDD: QueryRDD[T])(@transient val sqlContext: SQLContext) extends BaseRelation with TableScan {
+case class OQLRelation[T](queryRDD: RDD[T])(@transient val sqlContext: SQLContext) extends
+    BaseRelation with TableScan {
 
   override def schema: StructType = new SchemaBuilder(queryRDD).toSparkSchema()
 
@@ -31,7 +32,7 @@ case class OQLRelation[T](queryRDD: QueryRDD[T])(@transient val sqlContext: SQLC
 
 object RDDConverter {
 
-  def queryRDDToDataFrame[T](queryRDD: QueryRDD[T], sqlContext: SQLContext): DataFrame = {
+  def queryRDDToDataFrame[T](queryRDD: RDD[T], sqlContext: SQLContext): DataFrame = {
     sqlContext.baseRelationToDataFrame(OQLRelation(queryRDD)(sqlContext))
   }
 }

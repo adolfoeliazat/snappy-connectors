@@ -21,11 +21,12 @@ import scala.reflect.ClassTag
 
 import io.snappydata.spark.gemfire.connector.PreferredPartitionerPropKey
 import io.snappydata.spark.gemfire.connector.internal.DefaultGemFireConnectionManager
+import io.snappydata.spark.gemfire.connector.internal.oql.QueryParser
 import io.snappydata.spark.gemfire.connector.internal.rdd.GemFireRDDPartitioner._
+import io.snappydata.spark.gemfire.connector.internal.rdd.behaviour.{ComputeLogic, ExposeRegion}
 
 import org.apache.spark.rdd.RDD
 import org.apache.spark.sql.Row
-import org.apache.spark.sql.catalyst.expressions.GenericRow
 import org.apache.spark.{Partition, SparkContext, TaskContext}
 
 /**
@@ -35,13 +36,16 @@ import org.apache.spark.{Partition, SparkContext, TaskContext}
   * @param regionPath the full path of the region
   * @param opConf     the parameters for this operation, such as preferred partitioner.
   */
-class GemFireRegionRDD[K, V] private[connector]
-(@transient sc: SparkContext,
-    val regionPath: String,
+class GemFireRegionRDD[K, V, T]
+(@transient val sc: SparkContext,
+    val regionPath: Option[String],
+    val computeLogicCreator: GemFireRegionRDD[K, V, T] => ComputeLogic[K, V, T],
     val opConf: Map[String, String] = Map.empty,
-    val whereClause: Option[String] = None
-)(implicit ctk: ClassTag[K], ctv: ClassTag[V])
-    extends RDD[(K, V)](sc, Seq.empty) {
+    val rowObjectLength: Option[Int],
+    val whereClause: Option[String] = None,
+    val oql: Option[String] = None
+)(implicit ctk: ClassTag[K], ctv: ClassTag[V], ctr: ClassTag[T])
+    extends RDD[T](sc, Seq.empty) {
 
   /** validate region existence when GeodeRDD object is created */
   validate()
@@ -50,33 +54,34 @@ class GemFireRegionRDD[K, V] private[connector]
 
   def vClassTag = ctv
 
+  def tClassTag = ctr
+
   val isRowObject = classOf[Row].isAssignableFrom(vClassTag.runtimeClass)
 
   /** When where clause is specified, OQL query
     * `select key, value from /<region-path>.entries where <where clause> `
     * is used to filter the dataset.
     */
-  def where(whereClause: Option[String]): GemFireRegionRDD[K, V] = {
+  def where(whereClause: Option[String]): GemFireRegionRDD[K, V, T] = {
     if (whereClause.isDefined) copy(whereClause = whereClause)
     else this
   }
 
   /** this version is for Java API that doesn't use scala.Option */
-  def where(whereClause: String): GemFireRegionRDD[K, V] = {
+  def where(whereClause: String): GemFireRegionRDD[K, V, T] = {
     if (whereClause == null || whereClause.trim.isEmpty) this
     else copy(whereClause = Option(whereClause.trim))
   }
 
-  /**
-    * method `copy` is used by method `where` that creates new immutable
-    * GeodeRDD instance based this instance.
-    */
-  private def copy(
-      regionPath: String = regionPath,
-      opConf: Map[String, String] = opConf,
-      whereClause: Option[String] = None
-  ): GemFireRegionRDD[K, V] = {
+  override def compute(split: Partition, taskContext: TaskContext): scala.Iterator[T] = {
+    val partition = split.asInstanceOf[GemFireRDDPartition]
+    computeLogicCreator(this)(this, partition, taskContext)
+  }
 
+  protected def copy(
+      regionPath: Option[String] = regionPath,
+      opConf: Map[String, String] = opConf,
+      whereClause: Option[String] = None): GemFireRegionRDD[K, V, T] = {
     require(sc != null,
       """RDD transformation requires a non-null SparkContext. Unfortunately
         |SparkContext in this GeodeRDD is null. This can happen after
@@ -84,8 +89,11 @@ class GemFireRegionRDD[K, V] private[connector]
         |therefore it deserializes to null. RDD transformations are not allowed
         |inside lambdas used in other RDD transformations.""".stripMargin)
 
-    new GemFireRegionRDD[K, V](sc, regionPath, opConf, whereClause)
+    new GemFireRegionRDD[K, V, T](sc, regionPath, computeLogicCreator, opConf, rowObjectLength,
+      whereClause, oql)
+
   }
+
 
   /**
     * Use preferred partitioner generate partitions. `defaultReplicatedRegionPartitioner`
@@ -93,59 +101,73 @@ class GemFireRegionRDD[K, V] private[connector]
     */
   override def getPartitions: Array[Partition] = {
     val conn = DefaultGemFireConnectionManager.getConnection
-    val md = conn.getRegionMetadata[K, V](regionPath)
+    val rgn = regionPath.getOrElse(oql.map(GemFireRegionRDD.getRegionPathFromQuery(_)).
+        getOrElse(throw new IllegalStateException("Unknown region")))
+    val md = conn.getRegionMetadata(rgn)
     md match {
       case None => throw new RuntimeException(s"region $regionPath was not found.")
       case Some(data) =>
-        logInfo(s"""RDD id=${this.id} region=$regionPath conn=${DefaultGemFireConnectionManager.locators.mkString(",")}, env=$opConf""")
-        val p = if (data.isPartitioned) preferredPartitioner else defaultReplicatedRegionPartitioner
-        val splits = p.partitions[K, V](conn, data, opConf)
-        logDebug(s"""RDD id=${this.id} region=$regionPath partitions=\n  ${splits.mkString("\n  ")}""")
+
+        logInfo(
+          s"""RDD  region=$regionPath
+              |conn=${DefaultGemFireConnectionManager.locators.mkString(",")},
+              | env=$opConf""".stripMargin)
+
+        val p = if (data.isPartitioned) preferredPartitioner(opConf)
+        else defaultReplicatedRegionPartitioner
+        val splits = p.partitions(conn, data, opConf, Some(sparkContext))
+        logDebug(s"""RDD  region=$regionPath partitions=\n  ${splits.mkString("\n  ")}""")
         splits
     }
   }
 
-  /**
-    * Get preferred partitioner. return `defaultPartitionedRegionPartitioner` if none
-    * preference is specified.
-    */
-  private def preferredPartitioner =
-  GemFireRDDPartitioner(opConf.getOrElse(
-    PreferredPartitionerPropKey, GemFireRDDPartitioner.defaultPartitionedRegionPartitioner.name))
 
   /**
     * provide preferred location(s) (host name(s)) of the given partition.
     * Only some partitioner implementation(s) provides this info, which is
     * useful when Spark cluster and Geode cluster share some hosts.
     */
-  override def getPreferredLocations(split: Partition) =
+  override def getPreferredLocations(split: Partition): Seq[String] =
   split.asInstanceOf[GemFireRDDPartition].locations
 
-  /** materialize a RDD partition */
-  override def compute(split: Partition, context: TaskContext): Iterator[(K, V)] = {
-    val partition = split.asInstanceOf[GemFireRDDPartition]
-    logDebug(s"compute RDD id=${this.id} partition $partition")
-    val iter = DefaultGemFireConnectionManager.getConnection.
-        getRegionData[K, V](regionPath, whereClause, partition)
-    if (isRowObject) {
-     iter.map{
-       case (k, v) => (k, new GenericRow(v.asInstanceOf[Array[Any]]).asInstanceOf[V])
-     }
-    } else {
-      iter
-    }
-    // new InterruptibleIterator(context, split.asInstanceOf[GeodeRDDPartition[K, V]].iterator)
-  }
 
   /** Validate region, and make sure it exists. */
-  private def validate(): Unit = DefaultGemFireConnectionManager.getConnection.validateRegion[K, V](regionPath)
+  private def validate(): Unit = {
+    val rgn = regionPath.getOrElse(oql.map(GemFireRegionRDD.getRegionPathFromQuery(_)).
+        getOrElse(throw new IllegalStateException("Unknown region")))
+    DefaultGemFireConnectionManager.
+        getConnection.validateRegion[K, V](rgn)
+  }
+
+
+  /**
+    * Get preferred partitioner. return `defaultPartitionedRegionPartitioner` if none
+    * preference is specified.
+    */
+  private def preferredPartitioner(opConf: Map[String, String]) = GemFireRDDPartitioner(
+    opConf.getOrElse(PreferredPartitionerPropKey,
+      GemFireRDDPartitioner.defaultPartitionedRegionPartitioner.name))
+
 }
 
 object GemFireRegionRDD {
 
-  def apply[K: ClassTag, V: ClassTag](sc: SparkContext, regionPath: String,
-      opConf: Map[String, String] = Map.empty)
-  : GemFireRegionRDD[K, V] =
-    new GemFireRegionRDD[K, V](sc, regionPath, opConf)
+  def exposeRegion[K: ClassTag, V: ClassTag](sc: SparkContext, regionPath: String,
+      opConf: Map[String, String] = Map.empty): GemFireRegionRDD[K, V, (K, V)] =
+    new GemFireRegionRDD[K, V, (K, V)](sc, Some(regionPath),
+      (rdd: GemFireRegionRDD[K, V, (K, V)]) => new ExposeRegion[K, V, (K, V)],
+      opConf, None)
 
+  def getRegionPathFromQuery(queryString: String): String = {
+    val r = QueryParser.parseOQL(queryString).get
+    r match {
+      case r: String =>
+        val start = r.indexOf("/") + 1
+        var end = r.indexOf(")")
+        if (r.indexOf(".") > 0) end = math.min(r.indexOf("."), end)
+        if (r.indexOf(",") > 0) end = math.min(r.indexOf(","), end)
+        val regionPath = r.substring(start, end)
+        regionPath
+    }
+  }
 }

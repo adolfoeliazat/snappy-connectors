@@ -21,9 +21,6 @@ import java.util.Iterator;
 
 import com.gemstone.gemfire.DataSerializer;
 import com.gemstone.gemfire.cache.execute.ResultSender;
-import com.gemstone.gemfire.cache.query.internal.types.ObjectTypeImpl;
-import com.gemstone.gemfire.cache.query.internal.types.StructTypeImpl;
-import com.gemstone.gemfire.cache.query.types.ObjectType;
 import com.gemstone.gemfire.cache.query.types.StructType;
 import com.gemstone.gemfire.internal.HeapDataOutputStream;
 import com.gemstone.gemfire.internal.cache.CachedDeserializable;
@@ -31,14 +28,14 @@ import com.gemstone.gemfire.internal.logging.LogService;
 import io.snappydata.spark.gemfire.connector.internal.gemfirefunctions.shared.StructStreamingResult;
 import org.apache.logging.log4j.Logger;
 /**
- * StructStreamingResultSender and StructStreamingResultCollector  are paired
+ * ConnectionStreamingResultSender and StructStreamingResultCollector  are paired
  * to transfer result of list of `com.gemstone.gemfire.cache.query.Struct`
  * from GemFire server to Spark Connector (the client of GemFire server)
  * in streaming, i.e., while sender sending the result, the collector can
  * start processing the arrived result without waiting for full result to
  * become available.
  */
-public class StructStreamingResultSender implements StructStreamingResult{
+public class ConnectionStreamingResultSender<T> implements StructStreamingResult{
 
 
   private static final Logger logger = LogService.getLogger();
@@ -49,9 +46,10 @@ public class StructStreamingResultSender implements StructStreamingResult{
   //  always ResultSender<Object>, so can't use ResultSender<byte[]> here
   private final ResultSender<Object> sender;
   private final StructType structType;
-  private final Iterator<Object[]> rows;
+  private final Iterator<T> rows;
   private String desc;
   private boolean closed = false;
+  private final boolean isValOnly;
 
   /**
    * the Constructor
@@ -61,22 +59,24 @@ public class StructStreamingResultSender implements StructStreamingResult{
    * @param rows   the iterator of the collection of results
    * @param desc   description of this result (used for logging)
    */
-  public StructStreamingResultSender(
-      ResultSender<Object> sender, StructType type, Iterator<Object[]> rows, String desc) {
+  public ConnectionStreamingResultSender(
+      ResultSender<Object> sender, StructType type, Iterator<T> rows,
+      String desc, boolean isValOnly) {
     if (sender == null || rows == null)
       throw new NullPointerException("sender=" + sender + ", rows=" + rows);
     this.sender = sender;
     this.structType = type;
     this.rows = rows;
     this.desc = desc;
+    this.isValOnly = isValOnly;
   }
 
   /**
    * the Constructor with default `desc`
    */
-  public StructStreamingResultSender(
-      ResultSender<Object> sender, StructType type, Iterator<Object[]> rows) {
-    this(sender, type, rows, "StructStreamingResultSender");
+  public ConnectionStreamingResultSender(
+      ResultSender<Object> sender, StructType type, Iterator<T> rows, boolean isValOnly) {
+    this(sender, type, rows, "ConnectionStreamingResultSender", isValOnly);
   }
 
   /**
@@ -100,19 +100,43 @@ public class StructStreamingResultSender implements StructStreamingResult{
     try {
       if (rows.hasNext()) {
         // Note: only send type info if there's data with it
-        typeSize = sendType(buf);
+        if (!isValOnly) {
+          typeSize = sendType(buf);
+        }
         buf.writeByte(DATA_CHUNK);
-        int rowSize = structType == null ? 2 : structType.getFieldNames().length;
-        while (rows.hasNext()) {
-          rowCount++;
-          Object[] row = rows.next();
-          if (rowCount < 2) dataType = entryDataType(row);
-          if (rowSize != row.length)
-            throw new IOException(rowToString("Expect " + rowSize + " columns, but got ", row));
-          serializeRowToBuffer(row, buf);
-          if (buf.size() > CHUNK_SIZE) {
-            dataSize += sendBufferredData(buf, false);
-            buf.writeByte(DATA_CHUNK);
+        if (isValOnly) {
+          while (rows.hasNext()) {
+            rowCount++;
+            T row = rows.next();
+            if (row instanceof CachedDeserializable) {
+              buf.writeByte(SER_DATA);
+              DataSerializer.writeByteArray(((CachedDeserializable)row).getSerializedValue(), buf);
+            } else if (row instanceof byte[]) {
+              buf.writeByte(BYTEARR_DATA);
+              DataSerializer.writeByteArray((byte[])row, buf);
+            } else {
+              buf.writeByte(UNSER_DATA);
+              DataSerializer.writeObject(row, buf);
+            }
+            if (buf.size() > CHUNK_SIZE) {
+              dataSize += sendBufferredData(buf, false);
+              buf.writeByte(DATA_CHUNK);
+            }
+          }
+        } else {
+          int rowSize = structType == null ? 2 : structType.getFieldNames().length;
+
+          while (rows.hasNext()) {
+            rowCount++;
+            Object[] row = (Object[])rows.next();
+            if (rowCount < 2) dataType = entryDataType(row);
+            if (rowSize != row.length)
+              throw new IOException(rowToString("Expect " + rowSize + " columns, but got ", row));
+            serializeRowToBuffer(row, buf);
+            if (buf.size() > CHUNK_SIZE) {
+              dataSize += sendBufferredData(buf, false);
+              buf.writeByte(DATA_CHUNK);
+            }
           }
         }
       }
@@ -196,8 +220,8 @@ public class StructStreamingResultSender implements StructStreamingResult{
       buf.writeByte(ERROR_CHUNK);
       DataSerializer.writeObject(e, buf);
     } catch (IOException ioe) {
-      logger.error("StructStreamingResultSender failed to send the result:", e);
-      logger.error("StructStreamingResultSender failed to serialize the exception:", ioe);
+      logger.error("ConnectionStreamingResultSender failed to send the result:", e);
+      logger.error("ConnectionStreamingResultSender failed to serialize the exception:", ioe);
       buf.reset();
     }
     // Note: send empty chunk as the last result if serialization of exception 

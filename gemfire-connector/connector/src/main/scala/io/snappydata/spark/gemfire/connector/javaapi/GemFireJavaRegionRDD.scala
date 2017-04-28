@@ -20,8 +20,10 @@ import io.snappydata.spark.gemfire.connector.internal.rdd.GemFireRegionRDD
 
 import org.apache.spark.api.java.JavaPairRDD
 
-class GemFireJavaRegionRDD[K, V](rdd: GemFireRegionRDD[K, V]) extends JavaPairRDD[K, V](rdd)(rdd.kClassTag, rdd.vClassTag) {
+class GemFireJavaRegionRDD[K, V](rdd: GemFireRegionRDD[K, V, (K, V)]) extends
+    JavaPairRDD[K, V](rdd)(rdd.kClassTag, rdd.vClassTag) {
 
-  def where(whereClause: String): GemFireJavaRegionRDD[K, V] = new GemFireJavaRegionRDD(rdd.where(whereClause))
+  def where(whereClause: String): GemFireJavaRegionRDD[K, V] =
+    new GemFireJavaRegionRDD(rdd.where(whereClause))
 
 }
