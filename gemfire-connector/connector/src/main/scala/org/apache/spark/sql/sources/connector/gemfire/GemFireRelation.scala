@@ -14,7 +14,7 @@ import io.snappydata.spark.gemfire.connector.internal.DefaultGemFireConnectionMa
 import io.snappydata.spark.gemfire.connector.internal.rdd.behaviour.ComputeLogic
 import io.snappydata.spark.gemfire.connector.internal.rdd.{GemFireRDDPartition, GemFireRegionRDD}
 
-import org.apache.spark.TaskContext
+import org.apache.spark.{Logging, TaskContext}
 import org.apache.spark.rdd.RDD
 import org.apache.spark.sql.catalyst.expressions.{Attribute, AttributeReference, GenericRow}
 import org.apache.spark.sql.catalyst.{CatalystTypeConverters, JavaTypeInference}
@@ -29,8 +29,8 @@ case class GemFireRelation(@transient override val sqlContext: SnappyContext, re
     val primaryKeyColumnName: Option[String], valueColumnName: Option[String],
     keyConstraint: Option[String], valueConstraint: Option[String],
     providedSchema: Option[StructType], val asSelect: Boolean)
-    extends BaseRelation with TableScan with SchemaInsertableRelation with PrunedFilteredScan {
-
+    extends BaseRelation with TableScan with SchemaInsertableRelation
+        with PrunedFilteredScan with Logging {
 
   private val keyTag = ClassTag[Any](keyConstraint.map(MainUtils.classForName(_)).
       getOrElse(classOf[Any]))
@@ -231,7 +231,9 @@ case class GemFireRelation(@transient override val sqlContext: SnappyContext, re
       this.buildScan()
     } else {
       val oql = convertToOQL(requiredColumns, filters, spansOnlyValue)
-      println(" oql executed = " + oql)
+      if(this.isDebugEnabled) {
+        this.logDebug(s"GemFireRelation::buildScan:oql executed = $oql")
+      }
       new GemFireRegionRDD[Any, Any, Row](sqlContext.sparkContext,
         Some(regionPath), computeOQLAsRows, Map.empty[String, String], rowObjectLength, None,
         Some(oql))(keyTag, valueTag, classTag[Row])
