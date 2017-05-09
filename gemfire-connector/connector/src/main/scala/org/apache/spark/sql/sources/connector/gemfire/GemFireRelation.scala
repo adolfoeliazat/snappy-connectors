@@ -9,6 +9,7 @@ import java.beans.Introspector
 
 import scala.reflect.{ClassTag, classTag}
 
+import io.snappydata.spark.gemfire.connector.GemFireDataFrameFunctions
 import io.snappydata.spark.gemfire.connector.internal.DefaultGemFireConnectionManager
 import io.snappydata.spark.gemfire.connector.internal.rdd.behaviour.ComputeLogic
 import io.snappydata.spark.gemfire.connector.internal.rdd.{GemFireRDDPartition, GemFireRegionRDD}
@@ -25,7 +26,7 @@ import org.apache.spark.sql.{SQLContext, SaveMode, SnappyContext, _}
 import org.apache.spark.util.{Utils => MainUtils}
 
 case class GemFireRelation(@transient override val sqlContext: SnappyContext, regionPath: String,
-    primaryKeyColumnName: Option[String], valueColumnName: Option[String],
+    val primaryKeyColumnName: Option[String], valueColumnName: Option[String],
     keyConstraint: Option[String], valueConstraint: Option[String],
     providedSchema: Option[StructType], val asSelect: Boolean)
     extends BaseRelation with TableScan with SchemaInsertableRelation with PrunedFilteredScan {
@@ -240,42 +241,15 @@ case class GemFireRelation(@transient override val sqlContext: SnappyContext, re
 
   override def insertableRelation(sourceSchema: Seq[Attribute]): Option[InsertableRelation] = None
 
-  override def append(rows: RDD[Row], time: Long): Unit = {}
+  override def append(rows: RDD[Row], time: Long): Unit = {
+    val df = sqlContext.createDataFrame(rows, schema)
+    this.insert(df, true)
+  }
 
   override def insert(data: DataFrame, overwrite: Boolean): Unit = {
-    val sourceSchema = data.schema
-
-    // check for compatibility of the source schema with this relation
-    if (keyConstraint.isEmpty) {
-      sourceSchema(0).dataType match {
-        case _: StructType => throw OtherUtils.analysisException("The first element of the " +
-            "source is a nested type, which needs a Bean class as key class for GemFire Region")
-        case _ =>
-      }
-    }
-    // If key length is not provided treat it as 1
-    val inferredKeyLength = if (inferredKeySchema.length == 0) 1 else inferredKeySchema.length
-
-    if (valueConstraint.isEmpty) {
-      val availableValueLength = sourceSchema.length - inferredKeyLength
-      if (availableValueLength != 1) {
-        throw OtherUtils.analysisException("If the value fields in the Row object is more than 1," +
-            " then domain class for GemFire Region value should be provided as a Bean")
-      }
-    }
-
-    val inferredValueLength = if (inferredValueSchema.length == 0) 1 else inferredValueSchema.length
-
-    if (inferredKeyLength + inferredValueLength != providedSchema.size) {
-      throw OtherUtils.analysisException("The source schema is not compatible with " +
-          "the target schema")
-    }
-
-    data.rdd.map(row => {
-
-
-    })
-
+    val pkIndex = this.schema.indexWhere(sf => sf.name.equalsIgnoreCase(
+      this.primaryKeyColumnName.get))
+   new GemFireDataFrameFunctions(data).saveToGemFire[Any](regionPath, row => row(pkIndex))
   }
 
   private def convertDataTypeToStructFields(dataType: DataType, nullable: Boolean,
@@ -573,7 +547,6 @@ object GemFireRelation {
         val buckets = partition.bucketSet
         val rgnSize = DefaultGemFireConnectionManager.getConnection.
             getCount(rdd.regionPath.get, buckets, rdd.whereClause)
-
         new Iterator[Row]() {
           var current = 0
           val fixed = Row(1)
@@ -651,8 +624,12 @@ final class DefaultSource
 
   override def createRelation(sqlContext: SQLContext, mode: SaveMode,
       options: Map[String, String], data: DataFrame): BaseRelation = {
-    /*
-    val relation = createRelation(sqlContext, mode, options, Some(data.schema),
+    if (!options.contains(Constants.PRIMARY_KEY_COLUMN_NAME)) {
+      throw OtherUtils.analysisException("To insert into GemFire Region, primary key " +
+          "column needs to be specified")
+    }
+    val modOptions = options + (Constants.valueConstraintClass -> classOf[Row].getName)
+    val relation = createRelation(sqlContext, mode, modOptions, Some(data.schema),
        asSelect = true)
      var success = false
      try {
@@ -660,11 +637,14 @@ final class DefaultSource
        success = true
        relation
      } finally {
+       /*
        if (!success && !relation.tableExists) {
+
          relation.destroy(ifExists = true)
        }
+       */
      }
-     */
+
 
     throw new UnsupportedOperationException("work in progress")
   }

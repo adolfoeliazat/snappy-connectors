@@ -85,12 +85,12 @@ public class RegionCountFunction implements Function {
     String[] args = (String[])context.getArguments();
     String where = args[0];
 
-    int count = 0;
+    long count = 0;
     if("".equals(where)) {
       if (partitioned && !buckets.isEmpty()) {
         PartitionedRegionDataStore pds = ((PartitionedRegion)localRegion).getDataStore();
         for (int bucketId : buckets) {
-          count += pds.getBucketSize(bucketId);
+          count += pds.getLocalBucketById(bucketId).size();
         }
       } else {
         count = localRegion.size();
@@ -101,11 +101,14 @@ public class RegionCountFunction implements Function {
       Query query = CacheFactory.getAnyInstance().getQueryService().newQuery(queryString);
       try {
         Object result = partitioned ? query.execute((InternalRegionFunctionContext)context) : query.execute();
-        count = ((Integer)((SelectResults)result).iterator().next()).intValue();
+        count = ((Integer)((SelectResults)result).iterator().next()).longValue();
       } catch( Exception e) {
         throw new FunctionException(e);
       }
 
+    }
+    if(logger.isDebugEnabled()) {
+      logger.debug("RegionCountFunction : for buckets = " + buckets + " total count obtained=" + count);
     }
     context.getResultSender().lastResult(count);
   }

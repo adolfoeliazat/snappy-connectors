@@ -26,10 +26,10 @@ import com.gemstone.gemfire.internal.cache.GemFireCacheImpl
 import com.gemstone.gemfire.internal.cache.execute.InternalExecution
 import com.pivotal.gemfirexd.internal.engine.distributed.GfxdSingleResultCollector
 import io.snappydata.spark.gemfire.connector.GemFireConnection
-import io.snappydata.spark.gemfire.connector.internal.gemfirefunctions.{ConnectorStreamingResultCollector, DummyFunction}
+import io.snappydata.spark.gemfire.connector.internal.gemfirefunctions.{ConnectorStreamingResultCollector, CountResultCollector, DummyFunction}
 import io.snappydata.spark.gemfire.connector.internal.oql.QueryResultCollector
 import io.snappydata.spark.gemfire.connector.internal.rdd.GemFireRDDPartition
-import io.snappydata.spark.gemfire.connector.internal.gemfirefunctions.shared.{RegionMetadata, ConnectorFunctionIDs}
+import io.snappydata.spark.gemfire.connector.internal.gemfirefunctions.shared.{ConnectorFunctionIDs, RegionMetadata}
 import com.gemstone.gemfire.internal.cache.{GemFireCacheImpl, GemFireSparkConnectorCacheImpl}
 
 import org.apache.spark.Logging
@@ -78,15 +78,16 @@ private[connector] class DefaultGemFireConnection(locators: Array[String])
     if (!md.isDefined) throw new RuntimeException(s"The region named $regionPath was not found")
   }
 
-  override def getCount(regionPath: String, buckets: Set[Int], whereClause: Option[String]): Int = {
+  override def getCount(regionPath: String, buckets: Set[Int],
+      whereClause: Option[String]): Long = {
     val region = getRegionProxy(regionPath)
     val args: Array[String] = Array[String](whereClause.getOrElse(""))
-    val rc = new GfxdSingleResultCollector()
+    val rc = new CountResultCollector()
     import scala.collection.JavaConverters._
     val exec = FunctionService.onRegion(region).withArgs(args).withCollector(rc).
         asInstanceOf[InternalExecution].withFilter(buckets.map(Integer.valueOf).asJava)
 
-    exec.execute(ConnectorFunctionIDs.RegionCountFunction_ID).getResult.asInstanceOf[Int]
+    exec.execute(ConnectorFunctionIDs.RegionCountFunction_ID).getResult.asInstanceOf[Long]
 
   }
 

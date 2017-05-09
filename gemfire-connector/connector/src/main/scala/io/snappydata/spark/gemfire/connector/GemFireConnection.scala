@@ -66,7 +66,7 @@ trait GemFireConnection {
     */
   def getQuery(queryString: String): Query
 
-  def getCount(regionPath: String, buckets: Set[Int], whereClause: Option[String]): Int
+  def getCount(regionPath: String, buckets: Set[Int], whereClause: Option[String]): Long
 
   /** Close the connection */
   def close(): Unit

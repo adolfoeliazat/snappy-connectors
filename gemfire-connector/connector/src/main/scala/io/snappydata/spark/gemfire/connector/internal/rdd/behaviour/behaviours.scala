@@ -19,10 +19,10 @@ package io.snappydata.spark.gemfire.connector.internal.rdd.behaviour
 import scala.reflect.ClassTag
 
 import io.snappydata.spark.gemfire.connector.internal.DefaultGemFireConnectionManager
-import io.snappydata.spark.gemfire.connector.internal.rdd.{GemFireRDDPartition,
-GemFireRegionRDD}
+import io.snappydata.spark.gemfire.connector.internal.rdd.{GemFireRDDPartition, GemFireRegionRDD}
+
 import org.apache.spark.sql.catalyst.expressions.GenericRow
-import org.apache.spark.{Partition, TaskContext}
+import org.apache.spark.TaskContext
 
 
 
@@ -35,12 +35,24 @@ class ExposeRegion[K: ClassTag, V: ClassTag, T: ClassTag] extends ComputeLogic[K
         getRegionData[Any, Any](rdd.regionPath.get, rdd.whereClause, partition, 1).
         asInstanceOf[Iterator[(Any, Any)]]
     if (rdd.isRowObject) {
+
       iter.map{
-        case (k, v) => (k, new GenericRow(v.asInstanceOf[Array[Any]]).asInstanceOf[V]).
+        case (k, v) => (k, ExposeRegion.valueExtractor(v.asInstanceOf[Array[Any]]).asInstanceOf[V]).
             asInstanceOf[T]
       }
     } else {
       iter.asInstanceOf[Iterator[T]]
     }
   }
+}
+
+object ExposeRegion {
+
+  def valueExtractor(arr: Array[Any]) : GenericRow = new GenericRow(arr.map(x => {
+    if (x.getClass.isArray) {
+      valueExtractor(x.asInstanceOf[Array[Any]])
+    } else {
+      x
+    }
+  }))
 }

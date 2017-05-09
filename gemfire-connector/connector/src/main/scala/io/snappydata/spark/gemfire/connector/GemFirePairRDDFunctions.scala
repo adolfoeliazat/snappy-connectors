@@ -159,8 +159,20 @@ class GemFireDataFrameFunctions(val df: DataFrame) extends Serializable with Log
       throw Utils.analysisException("Saving Row object in GemFire is not " +
           "implemented for nested struct type ")
     }
-    val pairRDD = df.rdd.map(row => (keyExtractor(row), row.toSeq.toArray))
+    val pairRDD = df.rdd.map(row => (keyExtractor(row),
+        GemFireDataFrameFunctions.valueExtractor(row))
+    )
     val writer = new GemFirePairRDDWriter[K, Array[Any]](regionPath, opConf)
     pairRDD.sparkContext.runJob(pairRDD, writer.write _)
+  }
+
+}
+
+object GemFireDataFrameFunctions {
+  def valueExtractor(row: Row): Array[Any] = {
+    row.toSeq.map( x => x match {
+      case r: Row => valueExtractor(r)
+      case _ => x
+    }).toArray
   }
 }
