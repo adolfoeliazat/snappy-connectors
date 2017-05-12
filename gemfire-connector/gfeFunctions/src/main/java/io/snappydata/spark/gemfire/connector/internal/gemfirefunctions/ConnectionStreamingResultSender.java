@@ -38,14 +38,14 @@ import org.apache.logging.log4j.Logger;
 public class ConnectionStreamingResultSender<T> implements StructStreamingResult{
 
 
-  private static final Logger logger = LogService.getLogger();
+  protected static final Logger logger = LogService.getLogger();
   private static final int CHUNK_SIZE = 4096;
 
 
   // Note: The type of ResultSender returned from GemFire FunctionContext is
   //  always ResultSender<Object>, so can't use ResultSender<byte[]> here
   private final ResultSender<Object> sender;
-  private final StructType structType;
+
   private final Iterator<T> rows;
   private String desc;
   private boolean closed = false;
@@ -55,17 +55,16 @@ public class ConnectionStreamingResultSender<T> implements StructStreamingResult
    * the Constructor
    *
    * @param sender the base ResultSender that send data in byte array
-   * @param type   the StructType of result record
+
    * @param rows   the iterator of the collection of results
    * @param desc   description of this result (used for logging)
    */
   public ConnectionStreamingResultSender(
-      ResultSender<Object> sender, StructType type, Iterator<T> rows,
+      ResultSender<Object> sender, Iterator<T> rows,
       String desc, boolean isValOnly) {
     if (sender == null || rows == null)
       throw new NullPointerException("sender=" + sender + ", rows=" + rows);
     this.sender = sender;
-    this.structType = type;
     this.rows = rows;
     this.desc = desc;
     this.isValOnly = isValOnly;
@@ -75,8 +74,8 @@ public class ConnectionStreamingResultSender<T> implements StructStreamingResult
    * the Constructor with default `desc`
    */
   public ConnectionStreamingResultSender(
-      ResultSender<Object> sender, StructType type, Iterator<T> rows, boolean isValOnly) {
-    this(sender, type, rows, "ConnectionStreamingResultSender", isValOnly);
+      ResultSender<Object> sender, Iterator<T> rows, boolean isValOnly) {
+    this(sender, rows, "ConnectionStreamingResultSender", isValOnly);
   }
 
   /**
@@ -93,16 +92,12 @@ public class ConnectionStreamingResultSender<T> implements StructStreamingResult
     if (closed) throw new RuntimeException("sender is closed.");
 
     HeapDataOutputStream buf = new HeapDataOutputStream(CHUNK_SIZE + 2048, null);
-    String dataType = null;
+
     int typeSize = 0;
     int rowCount = 0;
     int dataSize = 0;
     try {
       if (rows.hasNext()) {
-        // Note: only send type info if there's data with it
-        if (!isValOnly) {
-          typeSize = sendType(buf);
-        }
         buf.writeByte(DATA_CHUNK);
         if (isValOnly) {
           while (rows.hasNext()) {
@@ -116,7 +111,7 @@ public class ConnectionStreamingResultSender<T> implements StructStreamingResult
               DataSerializer.writeByteArray((byte[])row, buf);
             } else {
               buf.writeByte(UNSER_DATA);
-              DataSerializer.writeObject(row, buf);
+              this.serializeValue(row, buf);
             }
             if (buf.size() > CHUNK_SIZE) {
               dataSize += sendBufferredData(buf, false);
@@ -124,12 +119,11 @@ public class ConnectionStreamingResultSender<T> implements StructStreamingResult
             }
           }
         } else {
-          int rowSize = structType == null ? 2 : structType.getFieldNames().length;
-
+          int rowSize = 2;
           while (rows.hasNext()) {
             rowCount++;
             Object[] row = (Object[])rows.next();
-            if (rowCount < 2) dataType = entryDataType(row);
+            //if (rowCount < 2) dataType = entryDataType(row);
             if (rowSize != row.length)
               throw new IOException(rowToString("Expect " + rowSize + " columns, but got ", row));
             serializeRowToBuffer(row, buf);
@@ -142,7 +136,7 @@ public class ConnectionStreamingResultSender<T> implements StructStreamingResult
       }
       // send last piece of data or empty byte array
       dataSize += sendBufferredData(buf, true);
-      logger.info(desc + ": " + rowCount + " rows, type=" + dataType + ", type.size=" +
+      logger.info(desc + ": " + rowCount + " rows, type.size=" +
           typeSize + ", data.size=" + dataSize + ", row.avg.size=" +
           (rowCount == 0 ? "NaN" : String.format("%.1f", ((float)dataSize) / rowCount)));
     } catch (IOException | RuntimeException e) {
@@ -152,13 +146,17 @@ public class ConnectionStreamingResultSender<T> implements StructStreamingResult
     }
   }
 
+  protected void serializeValue(Object value, HeapDataOutputStream buf) throws IOException {
+    DataSerializer.writeObject(value, buf);
+  }
+
   private String rowToString(String rowDesc, Object[] row) {
     StringBuilder buf = new StringBuilder();
     buf.append(rowDesc).append("(");
     for (int i = 0; i < row.length; i++) buf.append(i == 0 ? "" : " ,").append(row[i]);
     return buf.append(")").toString();
   }
-
+/*
   private String entryDataType(Object[] row) {
     StringBuilder buf = new StringBuilder();
     buf.append("(");
@@ -168,8 +166,9 @@ public class ConnectionStreamingResultSender<T> implements StructStreamingResult
     }
     return buf.append(")").toString();
   }
+  */
 
-  private void serializeRowToBuffer(Object[] row, HeapDataOutputStream buf) throws IOException {
+  protected void serializeRowToBuffer(Object[] row, HeapDataOutputStream buf) throws IOException {
     for (Object data : row) {
       if (data instanceof CachedDeserializable) {
         buf.writeByte(SER_DATA);
@@ -184,19 +183,7 @@ public class ConnectionStreamingResultSender<T> implements StructStreamingResult
     }
   }
 
-  /**
-   * return the size of type data
-   */
-  private int sendType(HeapDataOutputStream buf) throws IOException {
-    // logger.info(desc + " struct type: " + structType);
-    if (structType != null) {
-      buf.writeByte(TYPE_CHUNK);
-      DataSerializer.writeObject(structType, buf);
-      return sendBufferredData(buf, false);
-    } else {
-      return 0;  // default KeyValue type, no type info send
-    }
-  }
+
 
   private int sendBufferredData(HeapDataOutputStream buf, boolean isLast) throws IOException {
     if (isLast) sender.lastResult(buf.toByteArray());

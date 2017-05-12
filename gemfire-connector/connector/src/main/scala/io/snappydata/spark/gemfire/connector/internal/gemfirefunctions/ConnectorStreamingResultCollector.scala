@@ -62,7 +62,6 @@ class ConnectorStreamingResultCollector[T: ClassTag](desc: String) extends
     override def next(): T = currentIterator.next()
   }
   private val queue: BlockingQueue[Array[Byte]] = new LinkedBlockingQueue[Array[Byte]]()
-  var structType: StructType = null
 
   /** ------------------------------------------ */
   /** ResultCollector interface implementations */
@@ -94,12 +93,6 @@ class ConnectorStreamingResultCollector[T: ClassTag](desc: String) extends
 
   /** ------------------------------------------ */
 
-  def getResultType: StructType = {
-    // trigger lazy resultIterator initialization if necessary
-    if (!isValOnly && structType == null) resultIterator.hasNext
-    structType
-  }
-
   /** get the iterator for the next chunk of data */
   private def nextIterator(): Iterator[T] = {
     val chunk: Array[Byte] = queue.take
@@ -109,17 +102,11 @@ class ConnectorStreamingResultCollector[T: ClassTag](desc: String) extends
       val input = new ByteArrayDataInput()
       input.initialize(chunk, Version.CURRENT_GFE)
       val chunkType = input.readByte()
-      // println(s"chunk type $chunkType")
+
       chunkType match {
-        case TYPE_CHUNK =>
-          if (structType == null) {
-            structType = DataSerializer.readObject(input).asInstanceOf[StructTypeImpl]
-          }
-          nextIterator()
         case DATA_CHUNK =>
-          // require(structType != null && structType.getFieldNames.length > 0)
-          if (!isValOnly && structType == null) structType = KeyValueType
-          chunkToIterator(input, if (isValOnly) 0 else structType.getFieldNames.length)
+
+          chunkToIterator(input, if (isValOnly) 0 else 2)
         case ERROR_CHUNK =>
           val error = DataSerializer.readObject(input).asInstanceOf[Exception]
           errorPropagationIterator(error)
@@ -138,21 +125,23 @@ class ConnectorStreamingResultCollector[T: ClassTag](desc: String) extends
   }
 
   /** convert a chunk of data to an iterator */
-  private def chunkToIterator(input: ByteArrayDataInput, rowSize: Int) = new Iterator[T] {
+  def chunkToIterator(input: ByteArrayDataInput, rowSize: Int): Iterator[T] =
+  new ChunkIterator[T](input, rowSize)
+
+  class ChunkIterator[T](input: ByteArrayDataInput, rowSize: Int) extends Iterator[T] {
     override def hasNext: Boolean = input.available() > 0
 
     val tmpInput = new ByteArrayDataInput()
 
     override def next(): T = {
-
-      if (rowSize > 0) {
-        (0 until rowSize).map { ignore =>
-          readObject
-        }.toArray.asInstanceOf[T]
+      if (rowSize == 2) {
+        Array(readObject, readValue).asInstanceOf[T]
       } else {
-        readObject.asInstanceOf[T]
+        readValue.asInstanceOf[T]
       }
     }
+
+    protected def readValue = this.readObject
 
     private def readObject: Object = {
       val b = input.readByte()
@@ -172,4 +161,6 @@ class ConnectorStreamingResultCollector[T: ClassTag](desc: String) extends
   }
 
 }
+
+
 

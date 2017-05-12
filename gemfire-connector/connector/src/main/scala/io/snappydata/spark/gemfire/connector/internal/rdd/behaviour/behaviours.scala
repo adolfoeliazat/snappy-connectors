@@ -35,7 +35,6 @@ class ExposeRegion[K: ClassTag, V: ClassTag, T: ClassTag] extends ComputeLogic[K
         getRegionData[Any, Any](rdd.regionPath.get, rdd.whereClause, partition, 1).
         asInstanceOf[Iterator[(Any, Any)]]
     if (rdd.isRowObject) {
-
       iter.map{
         case (k, v) => (k, ExposeRegion.valueExtractor(v.asInstanceOf[Array[Any]]).asInstanceOf[V]).
             asInstanceOf[T]

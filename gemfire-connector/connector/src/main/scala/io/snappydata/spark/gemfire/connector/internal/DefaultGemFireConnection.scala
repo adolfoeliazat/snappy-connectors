@@ -110,10 +110,11 @@ private[connector] class DefaultGemFireConnection(locators: Array[String])
   }
 
   override def getRegionData[K, V](regionPath: String, whereClause: Option[String],
-      split: GemFireRDDPartition, keyLength: Int): Iterator[_] = {
+      split: GemFireRDDPartition, keyLength: Int, regionContainsRows: Boolean): Iterator[_] = {
     val region = getRegionProxy[K, V](regionPath)
     val desc = s"""RDD($regionPath, "${whereClause.getOrElse("")}", ${split.index})"""
-    val args: Array[String] = Array[String](whereClause.getOrElse(""), desc, keyLength.toString)
+    val args: Array[String] = Array[String](whereClause.getOrElse(""), desc, keyLength.toString,
+      regionContainsRows.toString)
     import scala.collection.JavaConverters._
 
     def executeFunction[T](collector: ConnectorStreamingResultCollector[T]): Unit = {

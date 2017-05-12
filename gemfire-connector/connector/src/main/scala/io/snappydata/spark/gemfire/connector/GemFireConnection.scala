@@ -54,7 +54,7 @@ trait GemFireConnection {
     * @param split       : Geode RDD Partition instance
     */
   def getRegionData[K, V](regionPath: String, whereClause: Option[String],
-      split: GemFireRDDPartition, keyLength: Int): Iterator[_]
+      split: GemFireRDDPartition, keyLength: Int, regionContainsRows: Boolean): Iterator[_]
 
   def executeQuery(regionPath: String, bucketSet: Set[Int],
       queryString: String, returnRaw: Boolean): Object

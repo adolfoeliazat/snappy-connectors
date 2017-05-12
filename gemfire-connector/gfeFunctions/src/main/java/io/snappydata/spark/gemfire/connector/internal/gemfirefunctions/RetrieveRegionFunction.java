@@ -85,13 +85,15 @@ public class RetrieveRegionFunction implements Function {
     String where = args[0];
     String taskDesc = args[1];
     int keyLength = Integer.parseInt(args[2]);
+    boolean regionContainsRows = Boolean.valueOf(args[3]);
     InternalRegionFunctionContext irfc = (InternalRegionFunctionContext)context;
     LocalRegion localRegion = (LocalRegion)irfc.getDataSet();
     boolean partitioned = localRegion.getDataPolicy().withPartitioning();
     if (where.trim().isEmpty())
-      retrieveFullRegion(irfc, partitioned, taskDesc, keyLength);
+      retrieveFullRegion(irfc, partitioned, taskDesc, keyLength, regionContainsRows);
     else
-      retrieveRegionWithWhereClause(irfc, localRegion, partitioned, where, taskDesc, keyLength);
+      retrieveRegionWithWhereClause(irfc, localRegion, partitioned, where, taskDesc, keyLength,
+          regionContainsRows);
   }
 
   /** ------------------------------------------ */
@@ -102,7 +104,7 @@ public class RetrieveRegionFunction implements Function {
 
   private void retrieveRegionWithWhereClause(
       InternalRegionFunctionContext context, LocalRegion localRegion, boolean partitioned, String where,
-      String desc, int keyLength) {
+      String desc, int keyLength, boolean regionContainsRows) {
     String regionPath = localRegion.getFullPath();
     String qstr = "";
     if( keyLength == 0) {
@@ -119,13 +121,15 @@ public class RetrieveRegionFunction implements Function {
       SelectResults<?> results = (SelectResults<?>)(partitioned ? query.execute(context) : query.execute());
       InternalResultSender irs = (InternalResultSender)context.getResultSender();
       if(keyLength == 0) {
-        ConnectionStreamingResultSender sender = new ConnectionStreamingResultSender<>(irs, null,
-            ((SelectResults<Object>)results).asList().iterator(), desc, true);
+        ConnectionStreamingResultSender sender =  regionContainsRows? new RowStreamingResultSender<>(irs,
+            ((SelectResults<Object>)results).asList().iterator(), desc, true):
+            new ConnectionStreamingResultSender<>(irs, ((SelectResults<Object>)results).asList().iterator(),
+                desc, true);
         sender.send();
       } else {
         Iterator<Object[]> entries = getStructIteratorWrapper(((SelectResults<Struct>)results).asList().iterator());
-        ConnectionStreamingResultSender sender = new ConnectionStreamingResultSender<>(irs, null,
-            entries, desc, false);
+        ConnectionStreamingResultSender sender = regionContainsRows? new RowStreamingResultSender<>(irs,
+            entries, desc, false): new ConnectionStreamingResultSender<>(irs, entries, desc, false);
         sender.send();
       }
 
@@ -150,7 +154,7 @@ public class RetrieveRegionFunction implements Function {
    */
 
    private  void retrieveFullRegion(InternalRegionFunctionContext context, boolean partitioned,
-      String desc, int keyLength) {
+      String desc, int keyLength, boolean regionContainsRows) {
     Iterator<?> dataIter;
     if (partitioned) {
       if(keyLength == 0) {
