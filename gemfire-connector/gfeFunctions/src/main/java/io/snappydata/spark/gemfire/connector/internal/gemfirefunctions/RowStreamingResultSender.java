@@ -5,10 +5,10 @@ import java.util.Iterator;
 
 import com.gemstone.gemfire.DataSerializer;
 import com.gemstone.gemfire.cache.execute.ResultSender;
-import com.gemstone.gemfire.cache.query.types.StructType;
-import com.gemstone.gemfire.internal.HeapDataOutputStream;
 import com.gemstone.gemfire.internal.cache.CachedDeserializable;
-import io.snappydata.spark.gemfire.connector.internal.GemFireRow;
+
+import io.snappydata.spark.gemfire.connector.internal.gemfirefunctions.shared.GemFireRow;
+import io.snappydata.spark.gemfire.connector.internal.gemfirefunctions.shared.NonVersionedHeapDataOutputStream;
 
 public class RowStreamingResultSender<T>  extends ConnectionStreamingResultSender<T> {
   /**
@@ -33,18 +33,18 @@ public class RowStreamingResultSender<T>  extends ConnectionStreamingResultSende
   }
 
   @Override
-  protected void serializeValue(Object value, HeapDataOutputStream buf) throws IOException {
-    ((GemFireRow)value).toDataWithoutSchema(buf);
+  protected void serializeValue(Object value, NonVersionedHeapDataOutputStream buf) throws IOException {
+    ((GemFireRow)value).toDataWithoutTopSchema(buf);
   }
 
 
   @Override
-  protected void serializeRowToBuffer(Object[] row, HeapDataOutputStream buf) throws IOException {
+  protected void serializeRowToBuffer(Object[] row, NonVersionedHeapDataOutputStream buf) throws IOException {
     this.serialize(row[0], true, buf);
     this.serialize(row[1], false, buf);
   }
 
-  private void serialize(Object data , boolean isKey, HeapDataOutputStream buf) throws IOException {
+  private void serialize(Object data , boolean isKey, NonVersionedHeapDataOutputStream buf) throws IOException {
     if (data instanceof CachedDeserializable) {
       buf.writeByte(SER_DATA);
       DataSerializer.writeByteArray(((CachedDeserializable)data).getSerializedValue(), buf);

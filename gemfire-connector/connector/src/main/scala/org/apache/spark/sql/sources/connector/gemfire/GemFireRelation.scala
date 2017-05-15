@@ -79,7 +79,7 @@ case class GemFireRelation(@transient override val sqlContext: SnappyContext, re
 
   override def buildScan(): RDD[Row] = new GemFireRegionRDD[Any, Any, Row](sqlContext.sparkContext,
     Some(regionPath), computeRegionAsRows, Map.empty[String, String],
-    rowObjectLength)(keyTag, valueTag, classTag[Row])
+    rowObjectLength, None, None, rowObjectLength.map(_ => this.inferredValueSchema))(keyTag, valueTag, classTag[Row])
 
 
   val inferredValueSchema = providedSchema.map(st =>
@@ -102,14 +102,14 @@ case class GemFireRelation(@transient override val sqlContext: SnappyContext, re
   override val schema = providedSchema.getOrElse(inferredKeySchema.merge(inferredValueSchema))
 
   private def conditionOQLAttributeForCaseRow(attribName: String,
-      spansOnlyValue: Boolean): String = {
+      spansOnlyValue: Boolean): (String, StructField) = {
     val index = this.inferredValueSchema.indexWhere(sf =>
       sf.name.equalsIgnoreCase(attribName))
     if (index != -1) {
       if (spansOnlyValue) {
-        s"x[$index]"
+        s"x.get($index)" -> this.inferredValueSchema(index)
       } else {
-        s"x.getValue()[$index]"
+        s"x.getValue().get($index)" -> this.inferredValueSchema(index)
       }
     } else {
       if (spansOnlyValue) {
@@ -119,7 +119,8 @@ case class GemFireRelation(@transient override val sqlContext: SnappyContext, re
         val index = this.inferredKeySchema.indexWhere(sf =>
           sf.name.equalsIgnoreCase(attribName))
         if (index != -1) {
-          s"x.getKey()" + (if (this.inferredKeySchema.size == 1) "" else s".$attribName")
+          s"x.getKey()" + (if (this.inferredKeySchema.size == 1) "" else s".$attribName") ->
+              this.inferredKeySchema(index)
         } else {
           throw OtherUtils.analysisException(s" column name $attribName not found in schema")
         }
@@ -128,15 +129,16 @@ case class GemFireRelation(@transient override val sqlContext: SnappyContext, re
   }
 
   private def conditionOQLAttributeForCaseDomain(attribName: String,
-      spansOnlyValue: Boolean): String = {
+      spansOnlyValue: Boolean): (String, StructField) = {
     val index = this.inferredValueSchema.indexWhere(sf =>
       sf.name.equalsIgnoreCase(attribName))
     if (index != -1) {
-      if (spansOnlyValue) {
+      ( if (spansOnlyValue) {
         "x"
       } else {
         "x.getValue"
-      } + (if (this.inferredValueSchema == 1) "" else s".$attribName")
+      } + (if (this.inferredValueSchema.size == 1) "" else s".$attribName")) ->
+          this.inferredValueSchema(index)
     } else {
       if (spansOnlyValue) {
         throw OtherUtils.analysisException(s" column name $attribName not found in schema")
@@ -145,29 +147,32 @@ case class GemFireRelation(@transient override val sqlContext: SnappyContext, re
         val index = this.inferredKeySchema.indexWhere(sf =>
           sf.name.equalsIgnoreCase(attribName))
         if (index != -1) {
-          s"x.getKey()" + (if (this.inferredKeySchema.size == 1) "" else s".$attribName")
+          s"x.getKey()" + (if (this.inferredKeySchema.size == 1) "" else s".$attribName") ->
+              this.inferredKeySchema(index)
         } else {
           throw OtherUtils.analysisException(s" column name $attribName not found in schema")
         }
       }
     }
-    s"x.$attribName"
+
   }
 
   private def getProjectionString(requiredColumns: Array[String],
-      spansOnlyValue: Boolean): String = {
+      spansOnlyValue: Boolean): (String, Option[StructType]) = {
     if (requiredColumns.isEmpty) {
-      " 1 "
+      (" 1 ", Some(StructType(Array(StructField("f1", ByteType, false)))))
     } else if (rowObjectLength.isDefined) {
       // the data stored in region is Object[]
       // Map the required columns to the indices of array
-      requiredColumns.map(name => {
+      val(projs, structfields) = requiredColumns.map(name => {
         conditionOQLAttributeForCaseRow(name, spansOnlyValue)
-      }).mkString(",")
+      }).unzip
+      projs.mkString(",") -> Some(StructType(structfields))
     } else {
-      requiredColumns.map(name => {
+      val(projs, structfields) = requiredColumns.map(name => {
         conditionOQLAttributeForCaseDomain(name, spansOnlyValue)
-      }).mkString(",")
+      }).unzip
+      projs.mkString(",") -> Some(StructType(structfields))
     }
 
   }
@@ -182,11 +187,11 @@ case class GemFireRelation(@transient override val sqlContext: SnappyContext, re
 
     val (attribConverter) = if (rowObjectLength.isDefined) {
       (attributeName: String) => {
-        conditionOQLAttributeForCaseRow(attributeName, spansOnlyValue)
+        conditionOQLAttributeForCaseRow(attributeName, spansOnlyValue)._1
       }
     } else {
       (attributeName: String) => {
-        conditionOQLAttributeForCaseDomain(attributeName, spansOnlyValue)
+        conditionOQLAttributeForCaseDomain(attributeName, spansOnlyValue)._1
 
       }
     }
@@ -197,15 +202,17 @@ case class GemFireRelation(@transient override val sqlContext: SnappyContext, re
 
 
   private def convertToOQL(requiredColumns: Array[String], filters: Array[Filter],
-      spansOnlyValue: Boolean): String = {
-    val builder = new StringBuilder("select ").append(
-      getProjectionString(requiredColumns, spansOnlyValue)).append(" from /").append(regionPath).
+      spansOnlyValue: Boolean): (String, Option[StructType]) = {
+    val (projString, schemaOpt) = getProjectionString(requiredColumns, spansOnlyValue)
+    val builder = new StringBuilder("select ").append(projString).append(" from /").
+        append(regionPath).
         append(if (spansOnlyValue) " as x " else ".entries as x")
-    if (filters.isEmpty) {
+
+    (if (filters.isEmpty) {
       builder.toString()
     } else {
       builder.append(" where ").append(getFilterString(filters, spansOnlyValue)).toString()
-    }
+    }, schemaOpt)
 
   }
 
@@ -230,13 +237,13 @@ case class GemFireRelation(@transient override val sqlContext: SnappyContext, re
         !requiredColumns.zip(schema).exists(tup => !tup._1.equalsIgnoreCase(tup._2.name))) {
       this.buildScan()
     } else {
-      val oql = convertToOQL(requiredColumns, filters, spansOnlyValue)
+      val (oql, schemaOpt) = convertToOQL(requiredColumns, filters, spansOnlyValue)
       if(this.isDebugEnabled) {
         this.logDebug(s"GemFireRelation::buildScan:oql executed = $oql")
       }
       new GemFireRegionRDD[Any, Any, Row](sqlContext.sparkContext,
         Some(regionPath), computeOQLAsRows, Map.empty[String, String], rowObjectLength, None,
-        Some(oql))(keyTag, valueTag, classTag[Row])
+        Some(oql), schemaOpt)(keyTag, valueTag, classTag[Row])
     }
 
   }
@@ -492,7 +499,8 @@ object GemFireRelation {
         val (totalSize, keyLength, keyConverter, valueConverter) = GemFireRelation.
             getLengthAndConverters(keyClass, valueClass, rowObjectLength)
         val iter = DefaultGemFireConnectionManager.getConnection.
-            getRegionData[Any, Any](rdd.regionPath.get, rdd.whereClause, partition, keyLength)
+            getRegionData[Any, Any](rdd.regionPath.get, rdd.whereClause, partition,
+          keyLength, rdd.schema)
         if (keyLength == 0) {
           iter.asInstanceOf[Iterator[Any]].map(v => {
             val array = Array.ofDim[Any](totalSize)
@@ -524,7 +532,7 @@ object GemFireRelation {
           GemFireRegionRDD.getRegionPathFromQuery(_)).
             getOrElse(throw new IllegalStateException("Unknown region")))
         val iter = DefaultGemFireConnectionManager.getConnection.
-            executeQuery(region, buckets, rdd.oql.get, rdd.regionPath.isDefined).
+            executeQuery(region, buckets, rdd.oql.get, rdd.schema ).
             asInstanceOf[Iterator[Any]]
         if (rdd.regionPath.isDefined) {
           iter.map {

@@ -19,6 +19,7 @@ package io.snappydata.spark.gemfire.connector.internal.rdd.behaviour
 import scala.reflect.ClassTag
 
 import io.snappydata.spark.gemfire.connector.internal.DefaultGemFireConnectionManager
+import io.snappydata.spark.gemfire.connector.internal.gemfirefunctions.shared.GemFireRow
 import io.snappydata.spark.gemfire.connector.internal.rdd.{GemFireRDDPartition, GemFireRegionRDD}
 
 import org.apache.spark.sql.catalyst.expressions.GenericRow
@@ -32,11 +33,12 @@ class ExposeRegion[K: ClassTag, V: ClassTag, T: ClassTag] extends ComputeLogic[K
     // logDebug(s"compute RDD id=${this.id} partition $partition")
 
     val iter = DefaultGemFireConnectionManager.getConnection.
-        getRegionData[Any, Any](rdd.regionPath.get, rdd.whereClause, partition, 1).
+        getRegionData[Any, Any](rdd.regionPath.get, rdd.whereClause, partition, 1, None).
         asInstanceOf[Iterator[(Any, Any)]]
     if (rdd.isRowObject) {
       iter.map{
-        case (k, v) => (k, ExposeRegion.valueExtractor(v.asInstanceOf[Array[Any]]).asInstanceOf[V]).
+        case (k, v) => (k, ExposeRegion.valueExtractor(
+          v.asInstanceOf[GemFireRow].getArray).asInstanceOf[V]).
             asInstanceOf[T]
       }
     } else {
@@ -47,11 +49,20 @@ class ExposeRegion[K: ClassTag, V: ClassTag, T: ClassTag] extends ComputeLogic[K
 
 object ExposeRegion {
 
-  def valueExtractor(arr: Array[Any]) : GenericRow = new GenericRow(arr.map(x => {
+  def valueExtractor(arr: Array[Object]) : GenericRow = new GenericRow(arr.map(x => {
     if (x.getClass.isArray) {
-      valueExtractor(x.asInstanceOf[Array[Any]])
+      valueExtractor(x.asInstanceOf[Array[Object]])
     } else {
-      x
+      x match {
+        case z: java.lang.Byte => z.byteValue()
+        case z: java.lang.Short => z.shortValue()
+        case z: java.lang.Integer => z.intValue()
+        case z: java.lang.Float => z.floatValue()
+        case z: java.lang.Long => z.longValue()
+        case z: java.lang.Double => z.doubleValue()
+        case z: java.lang.Boolean => z.booleanValue()
+        case _ => x.asInstanceOf[Any]
+      }
     }
   }))
 }

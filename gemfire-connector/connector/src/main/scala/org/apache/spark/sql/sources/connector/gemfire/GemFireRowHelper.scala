@@ -19,7 +19,8 @@ package org.apache.spark.sql.sources.connector.gemfire
 
 
 
-import io.snappydata.spark.gemfire.connector.internal.GemFireRow._
+
+import io.snappydata.spark.gemfire.connector.internal.gemfirefunctions.shared.SchemaMappings._
 
 import org.apache.spark.sql.types._
 

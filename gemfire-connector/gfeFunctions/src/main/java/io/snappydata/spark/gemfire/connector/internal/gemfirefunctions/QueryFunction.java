@@ -17,6 +17,7 @@
 package io.snappydata.spark.gemfire.connector.internal.gemfirefunctions;
 
 import java.util.Iterator;
+import java.util.StringTokenizer;
 
 import com.gemstone.gemfire.DataSerializer;
 import com.gemstone.gemfire.cache.CacheFactory;
@@ -74,7 +75,16 @@ public class QueryFunction implements Function {
       String[] args = (String[])context.getArguments();
       String queryString = args[0];
       String bucketSet = args[1];
-      boolean returnRaw = Boolean.valueOf(args[2]);
+      String schemaMapping = args[2];
+      byte[] schemaCode = null;
+      if (!"".equals(schemaMapping)) {
+        StringTokenizer stz = new StringTokenizer(schemaMapping, ",");
+        schemaCode = new byte[stz.countTokens()];
+        int i = 0;
+        while (stz.hasMoreTokens()) {
+          schemaCode[i++] = Byte.valueOf(stz.nextToken());
+        }
+      }
       InternalRegionFunctionContext irfc = (InternalRegionFunctionContext)context;
       LocalRegion localRegion = (LocalRegion)irfc.getDataSet();
       boolean partitioned = localRegion.getDataPolicy().withPartitioning();
@@ -83,12 +93,13 @@ public class QueryFunction implements Function {
       ResultSender<Object> sender = context.getResultSender();
       HeapDataOutputStream buf = new HeapDataOutputStream(CHUNK_SIZE, null);
       SelectResults sr = (SelectResults)result;
-      boolean isStruct = sr.getCollectionType().getElementType().isStructType();
       Iterator<Object> iter = sr.asList().iterator();
-      if(returnRaw && isStruct) {
+      if (schemaCode != null && schemaCode.length > 1) {
         while (iter.hasNext()) {
-          Object row = ((Struct)iter.next()).getFieldValues();
-          DataSerializer.writeObject(row, buf);
+          Struct row = (Struct)iter.next();
+            Object[] values = row.getFieldValues();
+            OQLRowSerializer.serializeRaw(values, schemaCode, buf);
+
           if (buf.size() > CHUNK_SIZE) {
             sender.sendResult(buf.toByteArray());
             logger.debug("OQL query=" + queryString + " bucket set=" + bucketSet + " sendResult(), data size=" + buf.size());
@@ -106,6 +117,7 @@ public class QueryFunction implements Function {
           }
         }
       }
+
       sender.lastResult(buf.toByteArray());
       logger.debug("OQL query=" + queryString + " bucket set=" + bucketSet + " lastResult(), data size=" + buf.size());
       buf.reset();

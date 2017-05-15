@@ -23,7 +23,7 @@ import scala.reflect.ClassTag
 import com.gemstone.gemfire.DataSerializer
 import com.gemstone.gemfire.internal.ByteArrayDataInput
 import com.gemstone.gemfire.internal.shared.Version
-import io.snappydata.spark.gemfire.connector.internal.GemFireRow
+import io.snappydata.spark.gemfire.connector.internal.gemfirefunctions.shared.GemFireRow
 import io.snappydata.spark.gemfire.connector.internal.gemfirefunctions.shared.StructStreamingResult._
 
 import org.apache.spark.sql.sources.connector.gemfire.RowDeserializer
@@ -38,7 +38,7 @@ class RowStreamingResultCollector[T: ClassTag](desc: String, schema: StructType)
   class RowChunkIterator[T](input: ByteArrayDataInput, rowSize: Int) extends
       ChunkIterator[T](input, rowSize) {
 
-    private def readValue: Object = {
+    override def readValue: Object = {
       val b = input.readByte()
       b match {
         case SER_DATA =>
@@ -46,7 +46,7 @@ class RowStreamingResultCollector[T: ClassTag](desc: String, schema: StructType)
           tmpInput.initialize(arr, Version.CURRENT)
           DataSerializer.readObject(tmpInput).asInstanceOf[GemFireRow].getArray
         case UNSER_DATA =>
-          RowDeserializer.readArrayData(new DataInputStream(input), schema)
+          RowDeserializer.readArrayDataWithoutTopSchema(new DataInputStream(input), schema)
         case BYTEARR_DATA =>
           DataSerializer.readByteArray(input).asInstanceOf[Object]
         case _ =>

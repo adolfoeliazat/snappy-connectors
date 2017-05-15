@@ -44,7 +44,7 @@ class GemFireSQLContextFunctions(@transient sqlContext: SQLContext) extends
     }
     val rdd = new GemFireRegionRDD[Any, Any, Any](sqlContext.sparkContext,
       None, computeOQLCreator, Map.empty[String, String], None, None,
-      Some(query))
+      Some(query), None)
 
     sqlContext.baseRelationToDataFrame(OQLRelation(rdd)(sqlContext))
 

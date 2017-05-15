@@ -27,6 +27,7 @@ import io.snappydata.spark.gemfire.connector.internal.rdd.behaviour.{ComputeLogi
 
 import org.apache.spark.rdd.RDD
 import org.apache.spark.sql.Row
+import org.apache.spark.sql.types.StructType
 import org.apache.spark.{Partition, SparkContext, TaskContext}
 
 /**
@@ -43,7 +44,8 @@ class GemFireRegionRDD[K, V, T]
     val opConf: Map[String, String] = Map.empty,
     val rowObjectLength: Option[Int],
     val whereClause: Option[String] = None,
-    val oql: Option[String] = None
+    val oql: Option[String] = None,
+    val schema: Option[StructType] = None
 )(implicit ctk: ClassTag[K], ctv: ClassTag[V], ctr: ClassTag[T])
     extends RDD[T](sc, Seq.empty) {
 

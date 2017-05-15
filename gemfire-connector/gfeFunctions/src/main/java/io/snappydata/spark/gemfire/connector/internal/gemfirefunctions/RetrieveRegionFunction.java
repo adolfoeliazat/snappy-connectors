@@ -85,15 +85,15 @@ public class RetrieveRegionFunction implements Function {
     String where = args[0];
     String taskDesc = args[1];
     int keyLength = Integer.parseInt(args[2]);
-    boolean regionContainsRows = Boolean.valueOf(args[3]);
+    boolean schemaAvailableOnClient = Boolean.valueOf(args[3]);
     InternalRegionFunctionContext irfc = (InternalRegionFunctionContext)context;
     LocalRegion localRegion = (LocalRegion)irfc.getDataSet();
     boolean partitioned = localRegion.getDataPolicy().withPartitioning();
     if (where.trim().isEmpty())
-      retrieveFullRegion(irfc, partitioned, taskDesc, keyLength, regionContainsRows);
+      retrieveFullRegion(irfc, partitioned, taskDesc, keyLength, schemaAvailableOnClient);
     else
       retrieveRegionWithWhereClause(irfc, localRegion, partitioned, where, taskDesc, keyLength,
-          regionContainsRows);
+          schemaAvailableOnClient);
   }
 
   /** ------------------------------------------ */
@@ -104,7 +104,7 @@ public class RetrieveRegionFunction implements Function {
 
   private void retrieveRegionWithWhereClause(
       InternalRegionFunctionContext context, LocalRegion localRegion, boolean partitioned, String where,
-      String desc, int keyLength, boolean regionContainsRows) {
+      String desc, int keyLength, boolean schemaAvailableOnClient) {
     String regionPath = localRegion.getFullPath();
     String qstr = "";
     if( keyLength == 0) {
@@ -121,14 +121,14 @@ public class RetrieveRegionFunction implements Function {
       SelectResults<?> results = (SelectResults<?>)(partitioned ? query.execute(context) : query.execute());
       InternalResultSender irs = (InternalResultSender)context.getResultSender();
       if(keyLength == 0) {
-        ConnectionStreamingResultSender sender =  regionContainsRows? new RowStreamingResultSender<>(irs,
+        ConnectionStreamingResultSender sender =  schemaAvailableOnClient? new RowStreamingResultSender<>(irs,
             ((SelectResults<Object>)results).asList().iterator(), desc, true):
             new ConnectionStreamingResultSender<>(irs, ((SelectResults<Object>)results).asList().iterator(),
                 desc, true);
         sender.send();
       } else {
         Iterator<Object[]> entries = getStructIteratorWrapper(((SelectResults<Struct>)results).asList().iterator());
-        ConnectionStreamingResultSender sender = regionContainsRows? new RowStreamingResultSender<>(irs,
+        ConnectionStreamingResultSender sender = schemaAvailableOnClient? new RowStreamingResultSender<>(irs,
             entries, desc, false): new ConnectionStreamingResultSender<>(irs, entries, desc, false);
         sender.send();
       }
@@ -154,7 +154,7 @@ public class RetrieveRegionFunction implements Function {
    */
 
    private  void retrieveFullRegion(InternalRegionFunctionContext context, boolean partitioned,
-      String desc, int keyLength, boolean regionContainsRows) {
+      String desc, int keyLength, boolean schemaAvailableOnClient) {
     Iterator<?> dataIter;
     if (partitioned) {
       if(keyLength == 0) {
@@ -177,10 +177,21 @@ public class RetrieveRegionFunction implements Function {
       }
     }
     InternalResultSender irs = (InternalResultSender)context.getResultSender();
-    ConnectionStreamingResultSender<?> sender = keyLength == 0 ?
-        new ConnectionStreamingResultSender<>(irs, null, (Iterator<Object>)dataIter, desc, keyLength == 0):
-      new ConnectionStreamingResultSender<>(irs, null, (Iterator<Object[]>)dataIter, desc, keyLength == 0);
-    sender.send();
+
+     if(keyLength == 0) {
+       ConnectionStreamingResultSender sender =  schemaAvailableOnClient?
+           new RowStreamingResultSender<>(irs, (Iterator<Object>)dataIter, desc,
+               keyLength == 0):
+           new ConnectionStreamingResultSender<>(irs, (Iterator<Object>)dataIter, desc,
+               keyLength == 0);
+       sender.send();
+     } else {
+       ConnectionStreamingResultSender<?> sender = schemaAvailableOnClient ?
+           new RowStreamingResultSender<>(irs, (Iterator<Object[]>)dataIter, desc, keyLength == 0):
+           new ConnectionStreamingResultSender<>(irs, (Iterator<Object[]>)dataIter, desc, keyLength == 0);
+       sender.send();
+     }
+
   }
 
 //  /** An iterator for partitioned region that uses internal API to get serialized value */

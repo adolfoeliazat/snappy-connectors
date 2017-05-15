@@ -20,6 +20,7 @@ import com.gemstone.gemfire.cache.Region
 import com.gemstone.gemfire.cache.query.Query
 import io.snappydata.spark.gemfire.connector.internal.rdd.GemFireRDDPartition
 import io.snappydata.spark.gemfire.connector.internal.gemfirefunctions.shared.RegionMetadata
+import org.apache.spark.sql.types.StructType
 
 trait GemFireConnection {
 
@@ -54,10 +55,11 @@ trait GemFireConnection {
     * @param split       : Geode RDD Partition instance
     */
   def getRegionData[K, V](regionPath: String, whereClause: Option[String],
-      split: GemFireRDDPartition, keyLength: Int, regionContainsRows: Boolean): Iterator[_]
+      split: GemFireRDDPartition, keyLength: Int,
+      schemaOpt: Option[StructType]): Iterator[_]
 
   def executeQuery(regionPath: String, bucketSet: Set[Int],
-      queryString: String, returnRaw: Boolean): Object
+      queryString: String, schemaOpt: Option[StructType]): Object
 
   /**
     * Create a gemfire OQL query

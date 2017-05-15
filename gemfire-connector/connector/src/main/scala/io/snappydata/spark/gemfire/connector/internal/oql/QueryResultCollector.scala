@@ -16,6 +16,7 @@
  */
 package io.snappydata.spark.gemfire.connector.internal.oql
 
+import java.io.{DataInput, InputStream}
 import java.util.concurrent.{LinkedBlockingDeque, TimeUnit}
 
 import com.gemstone.gemfire.DataSerializer
@@ -24,7 +25,13 @@ import com.gemstone.gemfire.distributed.DistributedMember
 import com.gemstone.gemfire.internal.ByteArrayDataInput
 import com.gemstone.gemfire.internal.shared.Version
 
-class QueryResultCollector extends ResultCollector[Array[Byte], Iterator[Object]] {
+
+import org.apache.spark.sql.sources.connector.gemfire.RowDeserializer
+import org.apache.spark.sql.types.StructType
+
+
+class QueryResultCollector(schemaOpt: Option[StructType]) extends
+    ResultCollector[Array[Byte], Iterator[Object]] {
 
   private lazy val resultIterator = new Iterator[Object] {
     private var currentIterator = nextIterator
@@ -54,6 +61,17 @@ class QueryResultCollector extends ResultCollector[Array[Byte], Iterator[Object]
 
   override def clearResults: Unit = queue.clear
 
+  val reader = if (schemaOpt.isDefined) {
+    val schema = schemaOpt.get
+    if(schema.size == 1) {
+      (is: DataInput) => DataSerializer.readObject(is).asInstanceOf[Object]
+    } else {
+      (is: DataInput) => RowDeserializer.readArrayDataWithoutTopSchema(is, schema,
+        false).asInstanceOf[Object]
+    }
+  } else {
+    (is: DataInput) => DataSerializer.readObject(is).asInstanceOf[Object]
+  }
   private def nextIterator: Iterator[Object] = {
     val chunk = queue.take
     if (chunk.isEmpty) {
@@ -62,10 +80,11 @@ class QueryResultCollector extends ResultCollector[Array[Byte], Iterator[Object]
     else {
       val input = new ByteArrayDataInput
       input.initialize(chunk, Version.CURRENT_GFE)
+
       new Iterator[Object] {
         override def hasNext: Boolean = input.available() > 0
 
-        override def next: Object = DataSerializer.readObject(input).asInstanceOf[Object]
+        override def next: Object = reader(input)
       }
     }
   }

@@ -18,11 +18,13 @@ package io.snappydata.spark.gemfire.connector
 
 import io.snappydata.spark.gemfire.connector.internal.rdd.{GemFireJoinRDD, GemFireOuterJoinRDD, GemFirePairRDDWriter}
 import io.snappydata.spark.gemfire.connector.internal.DefaultGemFireConnectionManager
+import io.snappydata.spark.gemfire.connector.internal.gemfirefunctions.shared.GemFireRow
 
 import org.apache.spark.Logging
 import org.apache.spark.api.java.function.Function
 import org.apache.spark.rdd.RDD
 import org.apache.spark.sql.collection.Utils
+import org.apache.spark.sql.sources.connector.gemfire.GemFireRowHelper
 import org.apache.spark.sql.types.StructType
 import org.apache.spark.sql.{DataFrame, Row}
 
@@ -44,7 +46,9 @@ class GemFirePairRDDFunctions[K, V](val rdd: RDD[(K, V)]) extends Serializable w
       opConf: Map[String, String] = Map.empty): Unit = {
     DefaultGemFireConnectionManager.getConnection.validateRegion[K, V](regionPath)
     if (log.isDebugEnabled)
-      logDebug(s"""Save RDD id=${rdd.id} to region $regionPath, partitions:\n  ${getRddPartitionsInfo(rdd)}""")
+      logDebug(
+        s"""Save RDD id=${rdd.id} to region $regionPath,
+           |partitions:\n  ${getRddPartitionsInfo(rdd)}""".stripMargin)
     else
       logInfo(s"""Save RDD id=${rdd.id} to region $regionPath""")
     val writer = new GemFirePairRDDWriter[K, V](regionPath, opConf)
@@ -150,6 +154,7 @@ class GemFireDataFrameFunctions(val df: DataFrame) extends Serializable with Log
       keyExtractor: Row => K,
       opConf: Map[String, String] = Map.empty): Unit = {
     DefaultGemFireConnectionManager.getConnection.validateRegion[K, Row](regionPath)
+    /*
     if(df.schema.exists(f => {
       f.dataType match {
         case _: StructType => true
@@ -158,21 +163,28 @@ class GemFireDataFrameFunctions(val df: DataFrame) extends Serializable with Log
     })) {
       throw Utils.analysisException("Saving Row object in GemFire is not " +
           "implemented for nested struct type ")
-    }
+    } */
+    val topSchemaCode = GemFireRowHelper.getSchemaCode(df.schema)
+    val topSchema = df.schema
     val pairRDD = df.rdd.map(row => (keyExtractor(row),
-        GemFireDataFrameFunctions.valueExtractor(row))
+        GemFireDataFrameFunctions.valueExtractor(row, topSchema, topSchemaCode))
     )
-    val writer = new GemFirePairRDDWriter[K, Array[Any]](regionPath, opConf)
+    val writer = new GemFirePairRDDWriter[K, GemFireRow](regionPath, opConf)
     pairRDD.sparkContext.runJob(pairRDD, writer.write _)
   }
 
 }
 
 object GemFireDataFrameFunctions {
-  def valueExtractor(row: Row): Array[Any] = {
-    row.toSeq.map( x => x match {
-      case r: Row => valueExtractor(r)
-      case _ => x
-    }).toArray
+  def valueExtractor(row: Row, schema: StructType, schemaCode: Array[Byte]): GemFireRow = {
+    val elements = row.toSeq.zip(schema).map {
+      case (elem, sf) => elem match {
+        case r: Row => valueExtractor(r,
+          sf.dataType.asInstanceOf[StructType],
+          GemFireRowHelper.getSchemaCode(sf.dataType.asInstanceOf[StructType]))
+        case x: AnyRef => x
+      }
+    }.toArray
+    new GemFireRow(schemaCode, elements, null)
   }
 }

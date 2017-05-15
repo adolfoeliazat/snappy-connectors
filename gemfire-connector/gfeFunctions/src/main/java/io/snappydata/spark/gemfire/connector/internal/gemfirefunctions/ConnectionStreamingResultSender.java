@@ -25,6 +25,7 @@ import com.gemstone.gemfire.cache.query.types.StructType;
 import com.gemstone.gemfire.internal.HeapDataOutputStream;
 import com.gemstone.gemfire.internal.cache.CachedDeserializable;
 import com.gemstone.gemfire.internal.logging.LogService;
+import io.snappydata.spark.gemfire.connector.internal.gemfirefunctions.shared.NonVersionedHeapDataOutputStream;
 import io.snappydata.spark.gemfire.connector.internal.gemfirefunctions.shared.StructStreamingResult;
 import org.apache.logging.log4j.Logger;
 /**
@@ -91,7 +92,7 @@ public class ConnectionStreamingResultSender<T> implements StructStreamingResult
   public void send() {
     if (closed) throw new RuntimeException("sender is closed.");
 
-    HeapDataOutputStream buf = new HeapDataOutputStream(CHUNK_SIZE + 2048, null);
+    NonVersionedHeapDataOutputStream buf = new NonVersionedHeapDataOutputStream(CHUNK_SIZE + 2048);
 
     int typeSize = 0;
     int rowCount = 0;
@@ -140,13 +141,14 @@ public class ConnectionStreamingResultSender<T> implements StructStreamingResult
           typeSize + ", data.size=" + dataSize + ", row.avg.size=" +
           (rowCount == 0 ? "NaN" : String.format("%.1f", ((float)dataSize) / rowCount)));
     } catch (IOException | RuntimeException e) {
+      logger.error("Exception in sending region data", e);
       sendException(buf, e);
     } finally {
       closed = true;
     }
   }
 
-  protected void serializeValue(Object value, HeapDataOutputStream buf) throws IOException {
+  protected void serializeValue(Object value, NonVersionedHeapDataOutputStream buf) throws IOException {
     DataSerializer.writeObject(value, buf);
   }
 
@@ -168,7 +170,7 @@ public class ConnectionStreamingResultSender<T> implements StructStreamingResult
   }
   */
 
-  protected void serializeRowToBuffer(Object[] row, HeapDataOutputStream buf) throws IOException {
+  protected void serializeRowToBuffer(Object[] row, NonVersionedHeapDataOutputStream buf) throws IOException {
     for (Object data : row) {
       if (data instanceof CachedDeserializable) {
         buf.writeByte(SER_DATA);
@@ -185,7 +187,7 @@ public class ConnectionStreamingResultSender<T> implements StructStreamingResult
 
 
 
-  private int sendBufferredData(HeapDataOutputStream buf, boolean isLast) throws IOException {
+  private int sendBufferredData(NonVersionedHeapDataOutputStream buf, boolean isLast) throws IOException {
     if (isLast) sender.lastResult(buf.toByteArray());
     else sender.sendResult(buf.toByteArray());
     // logData(buf.toByteArray(), desc);
@@ -197,7 +199,7 @@ public class ConnectionStreamingResultSender<T> implements StructStreamingResult
   /**
    * Send the exception as the last chunk of the result.
    */
-  private void sendException(HeapDataOutputStream buf, Exception e) {
+  private void sendException(NonVersionedHeapDataOutputStream buf, Exception e) {
     // Note: if exception happens during the serialization, the `buf` may contain
     // partial serialized data, which may cause de-serialization hang or error.
     // Therefore, always empty the buffer before sending the exception

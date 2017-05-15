@@ -26,13 +26,15 @@ import com.gemstone.gemfire.internal.cache.GemFireCacheImpl
 import com.gemstone.gemfire.internal.cache.execute.InternalExecution
 import com.pivotal.gemfirexd.internal.engine.distributed.GfxdSingleResultCollector
 import io.snappydata.spark.gemfire.connector.GemFireConnection
-import io.snappydata.spark.gemfire.connector.internal.gemfirefunctions.{ConnectorStreamingResultCollector, CountResultCollector, DummyFunction}
+import io.snappydata.spark.gemfire.connector.internal.gemfirefunctions.{ConnectorStreamingResultCollector, CountResultCollector, DummyFunction, RowStreamingResultCollector}
 import io.snappydata.spark.gemfire.connector.internal.oql.QueryResultCollector
 import io.snappydata.spark.gemfire.connector.internal.rdd.GemFireRDDPartition
 import io.snappydata.spark.gemfire.connector.internal.gemfirefunctions.shared.{ConnectorFunctionIDs, RegionMetadata}
 import com.gemstone.gemfire.internal.cache.{GemFireCacheImpl, GemFireSparkConnectorCacheImpl}
 
 import org.apache.spark.Logging
+import org.apache.spark.sql.sources.connector.gemfire.GemFireRowHelper
+import org.apache.spark.sql.types.StructType
 
 
 /**
@@ -110,11 +112,11 @@ private[connector] class DefaultGemFireConnection(locators: Array[String])
   }
 
   override def getRegionData[K, V](regionPath: String, whereClause: Option[String],
-      split: GemFireRDDPartition, keyLength: Int, regionContainsRows: Boolean): Iterator[_] = {
+      split: GemFireRDDPartition, keyLength: Int, schemaOpt: Option[StructType]): Iterator[_] = {
     val region = getRegionProxy[K, V](regionPath)
     val desc = s"""RDD($regionPath, "${whereClause.getOrElse("")}", ${split.index})"""
     val args: Array[String] = Array[String](whereClause.getOrElse(""), desc, keyLength.toString,
-      regionContainsRows.toString)
+      schemaOpt.map(_ => "true").getOrElse("false"))
     import scala.collection.JavaConverters._
 
     def executeFunction[T](collector: ConnectorStreamingResultCollector[T]): Unit = {
@@ -127,13 +129,19 @@ private[connector] class DefaultGemFireConnection(locators: Array[String])
 
 
     if (keyLength > 0) {
-      val collector = new ConnectorStreamingResultCollector[Array[Object]](desc)
+      val collector = schemaOpt.map(schema =>
+        new RowStreamingResultCollector[Array[Object]](desc, schema)).
+          getOrElse(new ConnectorStreamingResultCollector[Array[Object]](desc))
+
       executeFunction(collector)
       collector.getResult.map { objs: Array[Object] => (objs(0).asInstanceOf[K],
           objs(1).asInstanceOf[V])
       }
     } else {
-      val collector = new ConnectorStreamingResultCollector[Object](desc)
+      val collector = schemaOpt.map(schema =>
+        new RowStreamingResultCollector[Object](desc, schema)).
+          getOrElse(new ConnectorStreamingResultCollector[Object](desc))
+
       executeFunction(collector)
       collector.getResult
     }
@@ -151,15 +159,17 @@ private[connector] class DefaultGemFireConnection(locators: Array[String])
   }
 
   override def executeQuery(regionPath: String, bucketSet: Set[Int],
-      queryString: String, returnRaw: Boolean):
+      queryString: String, schema: Option[StructType]):
   AnyRef = {
     import scala.collection.JavaConverters._
     FunctionService.registerFunction(new DummyFunction {
       override def getId: String = ConnectorFunctionIDs.QueryFunction_ID
     })
-    val collector = new QueryResultCollector
+    val collector = new QueryResultCollector(schema)
     val region = getRegionProxy(regionPath)
-    val args: Array[String] = Array[String](queryString, bucketSet.toString, returnRaw.toString)
+    val schemaMapping = schema.map(GemFireRowHelper.getSchemaCode(_).mkString(",")).getOrElse("")
+    val args: Array[String] = Array[String](queryString, bucketSet.toString,
+      schemaMapping)
     val exec = FunctionService.onRegion(region).withCollector(collector).
         asInstanceOf[InternalExecution].withFilter(bucketSet.map(Integer.valueOf).asJava).
         withArgs(args)
