@@ -563,15 +563,15 @@ object GemFireRelation {
         if (rdd.regionPath.isDefined ) {
           iter.map {
             elem => elem match {
-              case arr: Array[Any] => if(hasNestedGemFireRow) {
-                new GenericRow(GemFireRowHelper.convertNestedGemFireRowToRow(rdd.schema.get, arr, 0))
+              case arr: Array[Any] => if (hasNestedGemFireRow) {
+                new GenericRow(GemFireRowHelper.
+                    convertNestedGemFireRowToRow(rdd.schema.get, arr, 0))
               } else {
                 Row(arr: _*)
               }
-              case _ => if( hasNestedGemFireRow) {
+              case _ => if (hasNestedGemFireRow) {
                 new GenericRow(GemFireRowHelper.convertNestedGemFireRowToRow(
-                  rdd.schema.get(0).dataType.asInstanceOf[StructType],
-                  GemFireRowHelper.convertObjectArrayToArrayAny(elem.asInstanceOf[GemFireRow].getArray), 0))
+                  rdd.schema.get, Array(elem), 0))
               } else {
                 Row(elem)
               }
@@ -648,8 +648,8 @@ final class DefaultSource
 
   }
 
-  override def createRelation(sqlContext: SQLContext,
-      options: Map[String, String]): BaseRelation = {
+    override def createRelation(sqlContext: SQLContext,
+        options: Map[String, String]): BaseRelation = {
 
     val allowExisting = options.get(JdbcExtendedUtils
         .ALLOW_EXISTING_PROPERTY).exists(_.toBoolean)
@@ -691,8 +691,6 @@ final class DefaultSource
        */
      }
 
-
-    throw new UnsupportedOperationException("work in progress")
   }
 
 }
