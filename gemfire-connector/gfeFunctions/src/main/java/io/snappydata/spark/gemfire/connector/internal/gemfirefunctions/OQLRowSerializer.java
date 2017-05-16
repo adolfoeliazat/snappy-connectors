@@ -7,6 +7,7 @@ import java.util.BitSet;
 
 import com.gemstone.gemfire.DataSerializer;
 import com.gemstone.gemfire.internal.HeapDataOutputStream;
+import io.snappydata.spark.gemfire.connector.internal.gemfirefunctions.shared.GemFireRow;
 import io.snappydata.spark.gemfire.connector.internal.gemfirefunctions.shared.SchemaMappings;
 
 
@@ -15,7 +16,7 @@ import io.snappydata.spark.gemfire.connector.internal.gemfirefunctions.shared.Sc
  */
 public class OQLRowSerializer {
   public static void serializeRaw(Object[] values, byte[] schemaCode, HeapDataOutputStream hdos)  throws IOException{
-    int numLongs = schemaCode.length / 8 + schemaCode.length % 8 > 0 ? 1 : 0;
+    int numLongs = GemFireRow.getNumLongsForBitSet(schemaCode.length);
     HeapDataOutputStream.LongUpdater [] updaters = new HeapDataOutputStream.LongUpdater[numLongs];
     for(int i = 0; i < numLongs; ++i) {
       updaters[i] = hdos.reserveLong();
@@ -36,17 +37,13 @@ public class OQLRowSerializer {
   }
 
   private static void writeNotNull(Object elem, HeapDataOutputStream hdos, byte code) throws IOException{
-    if(code == SchemaMappings.bigintt) {
-      DataSerializer.writeObject(elem, hdos);
-    } else if (code == SchemaMappings.booll) {
+    if (code == SchemaMappings.booll) {
       DataSerializer.writePrimitiveBoolean(((Boolean)elem).booleanValue(), hdos);
     } else if (code == SchemaMappings.bytee) {
       DataSerializer.writePrimitiveByte(((Byte)elem).byteValue(), hdos);
     } else if (code == SchemaMappings.datee) {
       Date val = (Date)elem;
       DataSerializer.writePrimitiveLong(val.getTime(), hdos);
-    } else if (code == SchemaMappings.decimall) {
-      DataSerializer.writeObject(elem, hdos);
     } else if (code == SchemaMappings.doublee) {
       DataSerializer.writePrimitiveDouble(((Double)elem).doubleValue(), hdos);
     } else if (code == SchemaMappings.floatt) {
@@ -61,11 +58,18 @@ public class OQLRowSerializer {
       DataSerializer.writeString((String)elem, hdos);
     } else if (code == SchemaMappings.structtypee) {
       DataSerializer.writeObject(elem, hdos);
-    } else if (code == SchemaMappings.timestampp) {
+    }else if (code == SchemaMappings.binary) {
+      DataSerializer.writeByteArray((byte[])elem, hdos);
+    }
+    else if (code == SchemaMappings.timestampp) {
       long val = ((Timestamp)elem).getTime();
       int nano = ((Timestamp)elem).getNanos();
       DataSerializer.writePrimitiveLong(val, hdos);
       DataSerializer.writePrimitiveInt(nano, hdos);
+    } else if (code == SchemaMappings.unoptimizedtype) {
+      DataSerializer.writeObject(elem, hdos);
+    } else  {
+      throw new IOException("Unhandled datatype");
     }
   }
 

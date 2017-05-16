@@ -26,9 +26,15 @@ public interface SchemaMappings {
   byte bytee = 5;
   byte floatt = 6;
   byte booll = 7;
-  byte decimall = 8;
-  byte bigintt = 9;
+  byte binary = 8;
   byte datee = 10;
   byte timestampp = 11;
   byte structtypee = 12;
+  byte unoptimizedtype = 13;
+
+  /*
+
+  Unoptmized types include, BigDecimal,
+
+   */
 }

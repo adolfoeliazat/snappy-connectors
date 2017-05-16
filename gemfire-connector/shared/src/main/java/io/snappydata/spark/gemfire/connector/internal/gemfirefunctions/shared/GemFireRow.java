@@ -113,16 +113,15 @@ public class GemFireRow implements DataSerializable {
             DataSerializer.writePrimitiveFloat(
                 (Float)elem, hdos);
             break;
+          case SchemaMappings.binary:
+            DataSerializer.writeByteArray(
+                (byte[])elem, hdos);
+            break;
           case SchemaMappings.booll:
             DataSerializer.writePrimitiveBoolean(
                 (Boolean)elem, hdos);
             break;
-          case SchemaMappings.decimall:
-            DataSerializer.writeObject(elem, hdos);
-            break;
-          case SchemaMappings.bigintt:
-            DataSerializer.writeObject(elem, hdos);
-            break;
+
           case SchemaMappings.datee:
             DataSerializer.writePrimitiveLong(
                 ((Date)elem).getTime(), hdos);
@@ -136,6 +135,10 @@ public class GemFireRow implements DataSerializable {
           case SchemaMappings.structtypee: {
             GemFireRow row = (GemFireRow)elem;
             row.toData(hdos);
+            break;
+          }
+          case SchemaMappings.unoptimizedtype: {
+            DataSerializer.writeObject(elem, hdos);
             break;
           }
 
@@ -203,14 +206,11 @@ public class GemFireRow implements DataSerializable {
           case SchemaMappings.floatt:
             deserialzed[i] = Float.valueOf(DataSerializer.readPrimitiveFloat(dis));
             break;
+          case SchemaMappings.binary:
+            deserialzed[i] = DataSerializer.readByteArray(dis);
+            break;
           case SchemaMappings.booll:
             deserialzed[i] = Boolean.valueOf(DataSerializer.readPrimitiveBoolean(dis));
-            break;
-          case SchemaMappings.decimall:
-            deserialzed[i] = DataSerializer.readObject(dis);
-            break;
-          case SchemaMappings.bigintt:
-            deserialzed[i] = DataSerializer.readObject(dis);
             break;
           case SchemaMappings.datee: {
             long time = DataSerializer.readPrimitiveLong(dis);
@@ -231,6 +231,9 @@ public class GemFireRow implements DataSerializable {
             deserialzed[i] = gfRow;
             break;
           }
+          case SchemaMappings.unoptimizedtype:
+            deserialzed[i] = DataSerializer.readObject(dis);
+            break;
         }
       }
     }

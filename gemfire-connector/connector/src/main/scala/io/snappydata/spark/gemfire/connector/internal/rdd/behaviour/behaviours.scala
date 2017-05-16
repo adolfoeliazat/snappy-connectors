@@ -50,19 +50,16 @@ class ExposeRegion[K: ClassTag, V: ClassTag, T: ClassTag] extends ComputeLogic[K
 object ExposeRegion {
 
   def valueExtractor(arr: Array[Object]) : GenericRow = new GenericRow(arr.map(x => {
-    if (x.getClass.isArray) {
-      valueExtractor(x.asInstanceOf[Array[Object]])
-    } else {
-      x match {
-        case z: java.lang.Byte => z.byteValue()
-        case z: java.lang.Short => z.shortValue()
-        case z: java.lang.Integer => z.intValue()
-        case z: java.lang.Float => z.floatValue()
-        case z: java.lang.Long => z.longValue()
-        case z: java.lang.Double => z.doubleValue()
-        case z: java.lang.Boolean => z.booleanValue()
-        case _ => x.asInstanceOf[Any]
-      }
+    x match {
+      case gfRow: GemFireRow => valueExtractor(gfRow.getArray)
+      case z: java.lang.Byte => z.byteValue()
+      case z: java.lang.Short => z.shortValue()
+      case z: java.lang.Integer => z.intValue()
+      case z: java.lang.Float => z.floatValue()
+      case z: java.lang.Long => z.longValue()
+      case z: java.lang.Double => z.doubleValue()
+      case z: java.lang.Boolean => z.booleanValue()
+      case _ => x.asInstanceOf[Any]
     }
   }))
 }

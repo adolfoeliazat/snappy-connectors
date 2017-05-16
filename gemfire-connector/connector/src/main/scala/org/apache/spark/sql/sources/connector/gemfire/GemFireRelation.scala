@@ -11,6 +11,7 @@ import scala.reflect.{ClassTag, classTag}
 
 import io.snappydata.spark.gemfire.connector.GemFireDataFrameFunctions
 import io.snappydata.spark.gemfire.connector.internal.DefaultGemFireConnectionManager
+import io.snappydata.spark.gemfire.connector.internal.gemfirefunctions.shared.GemFireRow
 import io.snappydata.spark.gemfire.connector.internal.rdd.behaviour.ComputeLogic
 import io.snappydata.spark.gemfire.connector.internal.rdd.{GemFireRDDPartition, GemFireRegionRDD}
 
@@ -47,6 +48,8 @@ case class GemFireRelation(@transient override val sqlContext: SnappyContext, re
   val rowObjectLength: Option[Int] = if (classOf[Row].isAssignableFrom(valueTag.runtimeClass)) {
     if (providedSchema.isDefined) {
       // there should be no embedded struct type for now
+      Some(providedSchema.get.length - inferredKeySchema.length)
+      /*
       if (!providedSchema.map(_.exists(f => f.dataType match {
         case _: StructType => true
         case _ => false
@@ -56,6 +59,7 @@ case class GemFireRelation(@transient override val sqlContext: SnappyContext, re
         throw OtherUtils.analysisException("Provided schema for Row objects should not have" +
             "nested struct type. For this to work, convert Row object into a Bean class")
       }
+      */
     } else {
       throw OtherUtils.analysisException("To access Row objects from GemFire region, " +
           "provided a schema ")
@@ -79,7 +83,8 @@ case class GemFireRelation(@transient override val sqlContext: SnappyContext, re
 
   override def buildScan(): RDD[Row] = new GemFireRegionRDD[Any, Any, Row](sqlContext.sparkContext,
     Some(regionPath), computeRegionAsRows, Map.empty[String, String],
-    rowObjectLength, None, None, rowObjectLength.map(_ => this.inferredValueSchema))(keyTag, valueTag, classTag[Row])
+    rowObjectLength, None, None, rowObjectLength.map(_ =>
+      this.inferredValueSchema))(keyTag, valueTag, classTag[Row])
 
 
   val inferredValueSchema = providedSchema.map(st =>
@@ -501,11 +506,21 @@ object GemFireRelation {
         val iter = DefaultGemFireConnectionManager.getConnection.
             getRegionData[Any, Any](rdd.regionPath.get, rdd.whereClause, partition,
           keyLength, rdd.schema)
+        val hasNestedGemFireRow = rdd.schema.map(_.exists(sf => sf.dataType match {
+          case _: StructType => true
+          case _ => false
+        })).getOrElse(false)
         if (keyLength == 0) {
           iter.asInstanceOf[Iterator[Any]].map(v => {
             val array = Array.ofDim[Any](totalSize)
             valueConverter(v, array)
-            new GenericRow(array): Row
+            new GenericRow(
+              if (!hasNestedGemFireRow) {
+              array
+            } else {
+               GemFireRowHelper.convertNestedGemFireRowToRow(rdd.schema.get, array, 0)
+            }
+            ): Row
           }
           )
         } else {
@@ -513,7 +528,13 @@ object GemFireRelation {
             val array = Array.ofDim[Any](totalSize)
             keyConverter(k, array)
             valueConverter(v, array)
-            new GenericRow(array): Row
+            new GenericRow(
+              if (!hasNestedGemFireRow) {
+                array
+              } else {
+                GemFireRowHelper.convertNestedGemFireRowToRow(rdd.schema.get, array, keyLength)
+              }
+            ): Row
           }
 
           }
@@ -534,11 +555,26 @@ object GemFireRelation {
         val iter = DefaultGemFireConnectionManager.getConnection.
             executeQuery(region, buckets, rdd.oql.get, rdd.schema ).
             asInstanceOf[Iterator[Any]]
-        if (rdd.regionPath.isDefined) {
+        val hasNestedGemFireRow = rdd.schema.map(_.exists(sf => sf.dataType match {
+          case _: StructType => true
+          case _ => false
+        })).getOrElse(false)
+
+        if (rdd.regionPath.isDefined ) {
           iter.map {
             elem => elem match {
-              case arr: Array[AnyRef] => Row(arr: _*)
-              case _ => Row(elem)
+              case arr: Array[Any] => if(hasNestedGemFireRow) {
+                new GenericRow(GemFireRowHelper.convertNestedGemFireRowToRow(rdd.schema.get, arr, 0))
+              } else {
+                Row(arr: _*)
+              }
+              case _ => if( hasNestedGemFireRow) {
+                new GenericRow(GemFireRowHelper.convertNestedGemFireRowToRow(
+                  rdd.schema.get(0).dataType.asInstanceOf[StructType],
+                  GemFireRowHelper.convertObjectArrayToArrayAny(elem.asInstanceOf[GemFireRow].getArray), 0))
+              } else {
+                Row(elem)
+              }
             }
           }.asInstanceOf[Iterator[T]]
         } else {

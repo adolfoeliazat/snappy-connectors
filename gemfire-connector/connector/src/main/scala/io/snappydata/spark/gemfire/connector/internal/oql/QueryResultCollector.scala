@@ -25,15 +25,14 @@ import com.gemstone.gemfire.distributed.DistributedMember
 import com.gemstone.gemfire.internal.ByteArrayDataInput
 import com.gemstone.gemfire.internal.shared.Version
 
-
 import org.apache.spark.sql.sources.connector.gemfire.RowDeserializer
-import org.apache.spark.sql.types.StructType
+import org.apache.spark.sql.types._
 
 
 class QueryResultCollector(schemaOpt: Option[StructType]) extends
-    ResultCollector[Array[Byte], Iterator[Object]] {
+    ResultCollector[Array[Byte], Iterator[Any]] {
 
-  private lazy val resultIterator = new Iterator[Object] {
+  private lazy val resultIterator = new Iterator[Any] {
     private var currentIterator = nextIterator
 
     def hasNext = {
@@ -47,9 +46,9 @@ class QueryResultCollector(schemaOpt: Option[StructType]) extends
   }
   private val queue = new LinkedBlockingDeque[Array[Byte]]()
 
-  override def getResult: Iterator[Object] = resultIterator
+  override def getResult: Iterator[Any] = resultIterator
 
-  override def getResult(timeout: Long, unit: TimeUnit): Iterator[Object] =
+  override def getResult(timeout: Long, unit: TimeUnit): Iterator[Any] =
     throw new UnsupportedOperationException
 
   override def addResult(memberID: DistributedMember, chunk: Array[Byte]): Unit =
@@ -64,15 +63,26 @@ class QueryResultCollector(schemaOpt: Option[StructType]) extends
   val reader = if (schemaOpt.isDefined) {
     val schema = schemaOpt.get
     if(schema.size == 1) {
-      (is: DataInput) => DataSerializer.readObject(is).asInstanceOf[Object]
+      (is: DataInput) => {
+        val obj = DataSerializer.readObject(is).asInstanceOf[Any]
+        obj match {
+          case z: java.lang.Short => z.shortValue
+          case z: java.lang.Integer => z.intValue
+          case z: java.lang.Float => z.floatValue
+          case z: java.lang.Long => z.longValue
+          case z: java.lang.Double => z.doubleValue
+          case z: java.lang.Boolean => z.booleanValue
+          case _ => obj.asInstanceOf[Any]
+        }
+      }
     } else {
       (is: DataInput) => RowDeserializer.readArrayDataWithoutTopSchema(is, schema,
-        false).asInstanceOf[Object]
+        false).asInstanceOf[Any]
     }
   } else {
-    (is: DataInput) => DataSerializer.readObject(is).asInstanceOf[Object]
+    (is: DataInput) => DataSerializer.readObject(is).asInstanceOf[Any]
   }
-  private def nextIterator: Iterator[Object] = {
+  private def nextIterator: Iterator[Any] = {
     val chunk = queue.take
     if (chunk.isEmpty) {
       Iterator.empty
@@ -81,10 +91,10 @@ class QueryResultCollector(schemaOpt: Option[StructType]) extends
       val input = new ByteArrayDataInput
       input.initialize(chunk, Version.CURRENT_GFE)
 
-      new Iterator[Object] {
+      new Iterator[Any] {
         override def hasNext: Boolean = input.available() > 0
 
-        override def next: Object = reader(input)
+        override def next: Any = reader(input)
       }
     }
   }

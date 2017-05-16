@@ -20,8 +20,10 @@ package org.apache.spark.sql.sources.connector.gemfire
 
 
 
+import io.snappydata.spark.gemfire.connector.internal.gemfirefunctions.shared.GemFireRow
 import io.snappydata.spark.gemfire.connector.internal.gemfirefunctions.shared.SchemaMappings._
 
+import org.apache.spark.sql.catalyst.expressions.GenericRow
 import org.apache.spark.sql.types._
 
 
@@ -32,12 +34,40 @@ object GemFireRowHelper {
     LongType -> longg, DoubleType -> doublee,
     ByteType -> bytee,
     FloatType -> floatt, BooleanType -> booll,
-    DecimalType.SYSTEM_DEFAULT -> decimall,
-    DecimalType.BigIntDecimal -> bigintt,
+    BinaryType -> binary,
     DateType -> datee, TimestampType -> timestampp,
     StructType -> structtypee )
 
   def getSchemaCode(schema: StructType): Array[Byte] = schema.map(sf =>
-    GemFireRowHelper.mapping.get(sf.dataType).get).toArray
+    GemFireRowHelper.mapping.get(sf.dataType).getOrElse(unoptimizedtype)).toArray
+
+
+  def convertNestedGemFireRowToRow(topLevelValueSchema: StructType,
+      top: Array[Any], keyPartLength: Int): Array[Any] = {
+      topLevelValueSchema.zipWithIndex.foreach {
+        case (sf, i) => sf.dataType match {
+          case st: StructType => {
+            top(i) = convertObjectArrayToArrayAny(top(i).
+                asInstanceOf[GemFireRow].getArray)
+            top(i + keyPartLength) = new GenericRow(convertNestedGemFireRowToRow(st,
+              top(i).asInstanceOf[Array[Any]], 0))
+          }
+          case _ =>
+        }
+      }
+      top
+  }
+
+  def convertObjectArrayToArrayAny(array: Array[Object]) : Array[Any] = {
+    array.map(x => x match {
+      case z: java.lang.Short => z.shortValue()
+      case z: java.lang.Integer => z.intValue()
+      case z: java.lang.Float => z.floatValue()
+      case z: java.lang.Long => z.longValue()
+      case z: java.lang.Double => z.doubleValue()
+      case z: java.lang.Boolean => z.booleanValue()
+      case _ => x.asInstanceOf[Any]
+    })
+  }
 }
 

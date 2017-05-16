@@ -23,6 +23,7 @@ import java.sql.Timestamp
 import com.gemstone.gemfire.DataSerializer
 import io.snappydata.spark.gemfire.connector.internal.gemfirefunctions.shared.GemFireRow
 
+import org.apache.spark.sql.catalyst.expressions.GenericRow
 import org.apache.spark.sql.types._
 
 object RowDeserializer {
@@ -44,9 +45,8 @@ object RowDeserializer {
           case  DoubleType => deser(i) = DataSerializer.readPrimitiveDouble(dis)
           case  ByteType => deser(i) = DataSerializer.readPrimitiveByte(dis)
           case  FloatType => deser(i) = DataSerializer.readPrimitiveFloat(dis)
+          case  BinaryType => deser(i) = DataSerializer.readByteArray(dis)
           case  BooleanType => deser(i) = DataSerializer.readPrimitiveBoolean(dis)
-          case  DecimalType.SYSTEM_DEFAULT => deser(i) = DataSerializer.readObject(dis)
-          case  DecimalType.BigIntDecimal => deser(i) = DataSerializer.readObject(dis)
           case  DateType => {
             val time = DataSerializer.readPrimitiveLong(dis)
             deser(i) = new java.sql.Date(time)
@@ -58,24 +58,27 @@ object RowDeserializer {
             ts.setNanos(nano)
             deser(i) = ts
           }
-          case structtypee => {
+          case _: StructType => {
             deser(i) = if (readNestedStruct) {
+              // This case happens only if complete value is obtained ,
+              // i.e GFRow itself is serialzied,
+              // This is the case when query is on all columns of region value
+              // & is the case of
+              // fetching select * only & for sure region contains GFRow
+              // & not domain object.
+              // In this case it is safe to convert nested struct
+              // into spark Row
               val gfRow = new GemFireRow()
               gfRow.fromData(dis)
-              gfRow.getArray.map(x => x match {
-                case z: java.lang.Short => z.shortValue()
-                case z: java.lang.Integer => z.intValue()
-                case z: java.lang.Float => z.floatValue()
-                case z: java.lang.Long => z.longValue()
-                case z: java.lang.Double => z.doubleValue()
-                case z: java.lang.Boolean => z.booleanValue()
-                case _ => x.asInstanceOf[Any]
-              })
+              gfRow
             } else {
               DataSerializer.readObject(dis)
             }
           }
+          // read unoptimized type
+          case _ => deser(i) = DataSerializer.readObject(dis)
         }
+
       }
       i += 1
     }
