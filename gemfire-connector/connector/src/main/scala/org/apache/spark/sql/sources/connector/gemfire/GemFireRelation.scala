@@ -81,10 +81,15 @@ case class GemFireRelation(@transient override val sqlContext: SnappyContext, re
 
   val computeForCount = (rdd: GemFireRegionRDD[Any, Any, Row]) => GemFireRelation.computeForCount
 
-  override def buildScan(): RDD[Row] = new GemFireRegionRDD[Any, Any, Row](sqlContext.sparkContext,
-    Some(regionPath), computeRegionAsRows, Map.empty[String, String],
-    rowObjectLength, None, None, rowObjectLength.map(_ =>
-      this.inferredValueSchema))(keyTag, valueTag, classTag[Row])
+  override def buildScan(): RDD[Row] = {
+    if (this.isDebugEnabled) {
+      logDebug("GemFireRelation: computing for empty build scan")
+    }
+    new GemFireRegionRDD[Any, Any, Row](sqlContext.sparkContext,
+      Some(regionPath), computeRegionAsRows, Map.empty[String, String],
+      rowObjectLength, None, None, rowObjectLength.map(_ =>
+        this.inferredValueSchema))(keyTag, valueTag, classTag[Row])
+  }
 
 
   val inferredValueSchema = providedSchema.map(st =>
@@ -235,17 +240,24 @@ case class GemFireRelation(@transient override val sqlContext: SnappyContext, re
         throw new UnsupportedOperationException("count query with where " +
             "clause spannng keys not supported")
       }
+      if (this.isDebugEnabled) {
+        logDebug("GemFireRelation: computing for count")
+      }
       new GemFireRegionRDD[Any, Any, Row](sqlContext.sparkContext,
         Some(regionPath), computeForCount, Map.empty[String, String], None, whereClause,
         None)(keyTag, valueTag, classTag[Row])
     } else if (requiredColumns.size == this.schema.size && filters.isEmpty &&
         !requiredColumns.zip(schema).exists(tup => !tup._1.equalsIgnoreCase(tup._2.name))) {
+      if (this.isDebugEnabled) {
+        logDebug("GemFireRelation: computing for empty build scan called from pruneFilter")
+      }
       this.buildScan()
     } else {
       val (oql, schemaOpt) = convertToOQL(requiredColumns, filters, spansOnlyValue)
-      if(this.isDebugEnabled) {
+      if (this.isDebugEnabled) {
         this.logDebug(s"GemFireRelation::buildScan:oql executed = $oql")
       }
+
       new GemFireRegionRDD[Any, Any, Row](sqlContext.sparkContext,
         Some(regionPath), computeOQLAsRows, Map.empty[String, String], rowObjectLength, None,
         Some(oql), schemaOpt)(keyTag, valueTag, classTag[Row])

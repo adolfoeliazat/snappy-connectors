@@ -182,7 +182,17 @@ object GemFireDataFrameFunctions {
         case r: Row => valueExtractor(r,
           sf.dataType.asInstanceOf[StructType],
           GemFireRowHelper.getSchemaCode(sf.dataType.asInstanceOf[StructType]))
-        case x: AnyRef => x
+        case x: Any => (x match {
+          case z: Byte => java.lang.Byte.valueOf(z)
+          case z: Short => java.lang.Short.valueOf(z)
+          case z: Int => java.lang.Integer.valueOf(z)
+          case z: Float => java.lang.Float.valueOf(z)
+          case z: Long => java.lang.Long.valueOf(z)
+          case z: Double => java.lang.Double.valueOf(z)
+          case z: Boolean => java.lang.Boolean.valueOf(z)
+          case _ => x
+        }).asInstanceOf[AnyRef]
+        case _ => null
       }
     }.toArray
     new GemFireRow(schemaCode, elements, null)

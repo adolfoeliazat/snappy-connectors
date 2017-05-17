@@ -37,7 +37,7 @@ package object connector {
   final val PreferredPartitionerPropKey = "preferred.partitioner"
   final val NumberPartitionsPerServerPropKey = "number.partitions.per.server"
   final val MaxBucketsPerPartitionKey = "gemfire.max.buckets.per.partition"
-  final val MaxBucketsPerPartitionDefault = 5
+  final val MaxBucketsPerPartitionDefault = 3
   final val OnePartitionPartitionerName = OnePartitionPartitioner.name
   final val ServerSplitsPartitionerName = ServerSplitsPartitioner.name
 

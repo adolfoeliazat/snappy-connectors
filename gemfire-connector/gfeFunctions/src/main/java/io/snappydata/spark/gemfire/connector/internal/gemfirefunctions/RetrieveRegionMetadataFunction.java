@@ -81,7 +81,7 @@ public class RetrieveRegionMetadataFunction implements Function {
       PartitionedRegion pregion = (PartitionedRegion)region;
       int totalBuckets = pregion.getAttributes().getPartitionAttributes().getTotalNumBuckets();
       Map<Integer, List<BucketServerLocation66>> bucketMap = pregion.getRegionAdvisor().getAllClientBucketProfiles();
-      HashMap<ServerLocation, HashSet<Integer>> serverMap = bucketServerMap2ServerBucketSetMap(bucketMap);
+      HashMap<String, HashSet<Integer>> serverMap = bucketServerMap2ServerBucketSetMap(bucketMap);
       metadata = new RegionMetadata(regionPath, true, totalBuckets, serverMap, kTypeName, vTypeName);
     }
 
@@ -96,18 +96,19 @@ public class RetrieveRegionMetadataFunction implements Function {
   /**
    * convert bucket to server map to server to bucket set map
    */
-  private HashMap<ServerLocation, HashSet<Integer>>
+  private HashMap<String, HashSet<Integer>>
   bucketServerMap2ServerBucketSetMap(Map<Integer, List<BucketServerLocation66>> map) {
-    HashMap<ServerLocation, HashSet<Integer>> serverBucketMap = new HashMap<>();
+    HashMap<String, HashSet<Integer>> serverBucketMap = new HashMap<>();
     for (Integer id : map.keySet()) {
       List<BucketServerLocation66> locations = map.get(id);
       for (BucketServerLocation66 location : locations) {
         ServerLocation server = new ServerLocation(location.getHostName(), location.getPort());
         if (location.isPrimary()) {
-          HashSet<Integer> set = serverBucketMap.get(server);
+          String lookupKey = server.getHostName() + ":" + server.getPort();
+          HashSet<Integer> set = serverBucketMap.get(lookupKey);
           if (set == null) {
             set = new HashSet<>();
-            serverBucketMap.put(server, set);
+            serverBucketMap.put(lookupKey, set);
           }
           set.add(id);
           break;

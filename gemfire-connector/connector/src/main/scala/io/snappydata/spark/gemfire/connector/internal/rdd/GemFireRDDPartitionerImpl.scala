@@ -32,8 +32,8 @@ object OnePartitionPartitioner extends GemFireRDDPartitioner {
 
   override val name = "OnePartition"
 
-  override def partitions(conn: GemFireConnection, md: RegionMetadata, env: Map[String, String],
-      sparkContext: Option[SparkContext]): Array[Partition] =
+  override def partitions(conn: GemFireConnection, md: RegionMetadata,
+      env: Map[String, String]): Array[Partition] =
     Array[Partition](new GemFireRDDPartition(0, Set.empty))
 }
 
@@ -45,34 +45,26 @@ object ServerSplitsPartitioner extends GemFireRDDPartitioner {
 
   override val name = "ServerSplits"
 
-  override def partitions(conn: GemFireConnection, md: RegionMetadata, env: Map[String, String],
-      sparkContext: Option[SparkContext]): Array[Partition] = {
+  override def partitions(conn: GemFireConnection, md: RegionMetadata,
+      env: Map[String, String]): Array[Partition] = {
     if (md == null) throw new RuntimeException("RegionMetadata is null")
-    val numberOfExecutors = sparkContext.map(
-      org.apache.spark.sql.collection.Utils.getAllExecutorsMemoryStatus(_).size)
-    /*
-    val n = try {
 
-      env.getOrElse(NumberPartitionsPerServerPropKey, "2").toInt
-    } catch {
-      case e: NumberFormatException => 2
-    }
-    */
+
     if (!md.isPartitioned || md.getServerBucketMap == null || md.getServerBucketMap.isEmpty) {
       Array[Partition](new GemFireRDDPartition(0, Set.empty))
     }
     else {
       val map = mapAsScalaMap(md.getServerBucketMap)
           .map { case (srv, set) => (srv, asScalaSet(set).map(_.toInt)) }.toList
-          .map { case (srv, set) => (srv.getHostName, set) }
-      doPartitions(map, md.getTotalBuckets, numberOfExecutors,
-        env.getOrElse(MaxBucketsPerPartitionKey, MaxBucketsPerPartitionDefault.toString).toInt)
+          .map { case (srv, set) => (srv, set) }
+      doPartitions(map, md.getTotalBuckets, env.getOrElse(MaxBucketsPerPartitionKey,
+        MaxBucketsPerPartitionDefault.toString).toInt)
     }
   }
 
   /** Converts server to bucket ID set list to array of RDD partitions */
   def doPartitions(serverBucketMap: List[(String, mutable.Set[Int])],
-      totalBuckets: Int, numberOfExecutors: Option[Int], maxBucketsPerPartition: Int)
+      totalBuckets: Int,  maxBucketsPerPartition: Int)
   : Array[Partition] = {
 
     // method that calculates the group size for splitting "k" items into "g" groups
@@ -80,23 +72,17 @@ object ServerSplitsPartitioner extends GemFireRDDPartitioner {
 
     // 1. convert list of server and bucket set pairs to a list of server and
     // sorted bucket set pairs
-    val srvToSortedBucketSet = serverBucketMap.map { case (srv, set) => (srv, SortedSet[Int]() ++ set) }
-    val minimumNumberOfpartitions = numberOfExecutors.map(scala.math.max(_,
-      srvToSortedBucketSet.size))
-    val totalPartitions = minimumNumberOfpartitions.map(x => {
-      val temp = totalBuckets / x
-      if(temp > maxBucketsPerPartition) {
-        totalBuckets / maxBucketsPerPartition
-      } else {
-        x
-      }
-    }).getOrElse(totalBuckets / maxBucketsPerPartition )
+    val srvToSortedBucketSet = serverBucketMap.map { case (srv, set) =>
+      (srv.split(':')(0), SortedSet[Int]() ++ set) }
+
+    val totalPartitions = totalBuckets / maxBucketsPerPartition
 
     // 2. split bucket set of each server into n splits if possible, and server to Seq(server)
     val srvToSplitedBuckeSet = srvToSortedBucketSet.flatMap { case (host, set) =>
-      if (set.isEmpty) Nil else set.grouped(groupSize(set.size, totalPartitions)).
-          toList.map(s => (Seq(host), s))
+      if (set.isEmpty) Nil else set.grouped(groupSize(set.size,
+        totalPartitions)).toList.map(s => (Seq(host), s))
     }
+
 
     // 3. calculate empty bucket IDs by removing all bucket sets of all
     // servers from the full bucket sets
@@ -108,18 +94,18 @@ object ServerSplitsPartitioner extends GemFireRDDPartitioner {
     //    The empty buckets do not contain data when partitions are created,
     // but they may contain data
     //    when RDD is materialized, so need to include those bucket IDs in the partitions.
-    val srvToFinalBucketSet = if (emptyIDs.isEmpty) srvToSplitedBuckeSet
+   val srvToFinalBucketSet = if (emptyIDs.isEmpty) srvToSplitedBuckeSet
     else srvToSplitedBuckeSet.zipAll(
-      emptyIDs.grouped(groupSize(emptyIDs.size, srvToSplitedBuckeSet.size)).
-          toList, (Nil, Set.empty), Set.empty).map {
+      emptyIDs.grouped(groupSize(emptyIDs.size, srvToSplitedBuckeSet.size)).toList,
+      (Nil, Set.empty), Set.empty).map {
       case ((server, set1), set2) => (server, SortedSet[Int]() ++ set1 ++ set2)
     }
-   
+
     // 5. create array of partitions w/ 0-based index
     (0 until srvToFinalBucketSet.size).toList.zip(srvToFinalBucketSet).map {
       case (i, (srv, set)) => {
       val temp = srv.filter(_ != null)
-      new GemFireRDDPartition(i, set, if (temp.isEmpty) Nil else temp)
+      new GemFireRDDPartition(i, set, temp)
     }
     }.toArray
   }

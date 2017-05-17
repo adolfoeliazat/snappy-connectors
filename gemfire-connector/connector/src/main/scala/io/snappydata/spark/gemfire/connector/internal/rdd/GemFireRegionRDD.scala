@@ -106,19 +106,26 @@ class GemFireRegionRDD[K, V, T]
     val rgn = regionPath.getOrElse(oql.map(GemFireRegionRDD.getRegionPathFromQuery(_)).
         getOrElse(throw new IllegalStateException("Unknown region")))
     val md = conn.getRegionMetadata(rgn)
+    logInfo("servers to buckets obtained = " + md.get.getServerBucketMap)
     md match {
       case None => throw new RuntimeException(s"region $regionPath was not found.")
       case Some(data) =>
-
-        logInfo(
-          s"""RDD  region=$regionPath
-              |conn=${DefaultGemFireConnectionManager.locators.mkString(",")},
+        if (this.isDebugEnabled) {
+          logDebug(
+            s"""RDD  region=$regionPath
+                |conn=${DefaultGemFireConnectionManager.locators.mkString(",")},
               | env=$opConf""".stripMargin)
+          }
 
         val p = if (data.isPartitioned) preferredPartitioner(opConf)
         else defaultReplicatedRegionPartitioner
-        val splits = p.partitions(conn, data, opConf, Some(sparkContext))
-        logDebug(s"""RDD  region=$regionPath partitions=\n  ${splits.mkString("\n  ")}""")
+        val splits = p.partitions(conn, data, opConf)
+        if (this.isDebugEnabled) {
+          logDebug(
+            s"""GemFireRegionRDD:: getPartitions:
+             |region=$regionPath partitions=\n  ${splits.mkString("\n  ")}""".
+                stripMargin)
+          }
         splits
     }
   }

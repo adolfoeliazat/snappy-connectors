@@ -31,8 +31,8 @@ trait GemFireRDDPartitioner extends Serializable {
   def name: String
 
   /** the function that generates partitions */
-  def partitions (conn: GemFireConnection, md: RegionMetadata, env: Map[String, String],
-      sparkContext: Option[SparkContext]): Array[Partition]
+  def partitions (conn: GemFireConnection, md: RegionMetadata,
+      env: Map[String, String]): Array[Partition]
 }
 
 object GemFireRDDPartitioner extends Logging {

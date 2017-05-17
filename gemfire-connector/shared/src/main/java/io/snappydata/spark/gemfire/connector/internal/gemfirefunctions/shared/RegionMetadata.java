@@ -16,21 +16,27 @@
  */
 package io.snappydata.spark.gemfire.connector.internal.gemfirefunctions.shared;
 
+import java.io.DataInput;
+import java.io.DataOutput;
+import java.io.IOException;
 import java.io.Serializable;
 import java.util.HashMap;
 import java.util.HashSet;
+import java.util.Map;
 
+import com.gemstone.gemfire.DataSerializable;
+import com.gemstone.gemfire.DataSerializer;
 import com.gemstone.gemfire.distributed.internal.ServerLocation;
 
 /**
  * This class contains all info required by GemFire RDD partitioner to create partitions.
  */
-public class RegionMetadata implements Serializable {
+public class RegionMetadata implements Serializable, DataSerializable {
 
   private String regionPath;
   private boolean isPartitioned;
   private int totalBuckets;
-  private HashMap<ServerLocation, HashSet<Integer>> serverBucketMap;
+  private HashMap<String, HashSet<Integer>> serverBucketMap;
   private String keyTypeName;
   private String valueTypeName;
 
@@ -44,7 +50,7 @@ public class RegionMetadata implements Serializable {
    * @param keyTypeName     region key class name
    * @param valueTypeName   region value class name
    */
-  public RegionMetadata(String regionPath, boolean isPartitioned, int totalBuckets, HashMap<ServerLocation, HashSet<Integer>> serverBucketMap,
+  public RegionMetadata(String regionPath, boolean isPartitioned, int totalBuckets, HashMap<String, HashSet<Integer>> serverBucketMap,
       String keyTypeName, String valueTypeName) {
     this.regionPath = regionPath;
     this.isPartitioned = isPartitioned;
@@ -54,7 +60,9 @@ public class RegionMetadata implements Serializable {
     this.valueTypeName = valueTypeName;
   }
 
-  public RegionMetadata(String regionPath, boolean isPartitioned, int totalBuckets, HashMap<ServerLocation, HashSet<Integer>> serverBucketMap) {
+  public RegionMetadata() { }
+
+  public RegionMetadata(String regionPath, boolean isPartitioned, int totalBuckets, HashMap<String, HashSet<Integer>> serverBucketMap) {
     this(regionPath, isPartitioned, totalBuckets, serverBucketMap, null, null);
   }
 
@@ -70,7 +78,7 @@ public class RegionMetadata implements Serializable {
     return totalBuckets;
   }
 
-  public HashMap<ServerLocation, HashSet<Integer>> getServerBucketMap() {
+  public HashMap<String, HashSet<Integer>> getServerBucketMap() {
     return serverBucketMap;
   }
 
@@ -91,4 +99,23 @@ public class RegionMetadata implements Serializable {
     return buf.toString();
   }
 
+  @Override
+  public void toData(DataOutput dataOutput) throws IOException {
+    DataSerializer.writeString(this.regionPath, dataOutput);
+    DataSerializer.writePrimitiveBoolean(this.isPartitioned, dataOutput);
+    DataSerializer.writePrimitiveInt(this.totalBuckets, dataOutput);
+    DataSerializer.writeString(this.keyTypeName, dataOutput);
+    DataSerializer.writeString(this.valueTypeName, dataOutput);
+    DataSerializer.writeHashMap(this.serverBucketMap, dataOutput);
+  }
+
+  @Override
+  public void fromData(DataInput dataInput) throws IOException, ClassNotFoundException {
+    this.regionPath = DataSerializer.readString(dataInput);
+    this.isPartitioned = DataSerializer.readPrimitiveBoolean(dataInput);
+    this.totalBuckets = DataSerializer.readPrimitiveInt(dataInput);
+    this.keyTypeName = DataSerializer.readString(dataInput);
+    this.valueTypeName = DataSerializer.readString(dataInput);
+    this.serverBucketMap = DataSerializer.readHashMap(dataInput);
+  }
 }
