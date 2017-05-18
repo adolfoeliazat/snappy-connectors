@@ -7,7 +7,7 @@ import java.util.BitSet;
 
 import com.gemstone.gemfire.DataSerializer;
 import com.gemstone.gemfire.internal.HeapDataOutputStream;
-import io.snappydata.spark.gemfire.connector.internal.gemfirefunctions.shared.GemFireRow;
+import io.snappydata.spark.gemfire.connector.internal.GemFireRow;
 import io.snappydata.spark.gemfire.connector.internal.gemfirefunctions.shared.SchemaMappings;
 
 

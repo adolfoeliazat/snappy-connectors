@@ -20,7 +20,7 @@ package org.apache.spark.sql.sources.connector.gemfire
 
 
 
-import io.snappydata.spark.gemfire.connector.internal.gemfirefunctions.shared.GemFireRow
+import io.snappydata.spark.gemfire.connector.internal.GemFireRow
 import io.snappydata.spark.gemfire.connector.internal.gemfirefunctions.shared.SchemaMappings._
 
 import org.apache.spark.sql.catalyst.expressions.GenericRow
@@ -47,10 +47,8 @@ object GemFireRowHelper {
       topLevelValueSchema.zipWithIndex.foreach {
         case (sf, i) => sf.dataType match {
           case st: StructType => {
-            top(i) = convertObjectArrayToArrayAny(top(i).
-                asInstanceOf[GemFireRow].getArray)
             top(i + keyPartLength) = new GenericRow(convertNestedGemFireRowToRow(st,
-              top(i).asInstanceOf[Array[Any]], 0))
+              top(i + keyPartLength).asInstanceOf[GemFireRow].getArray, 0))
           }
           case _ =>
         }
@@ -58,6 +56,7 @@ object GemFireRowHelper {
       top
   }
 
+  /*
   def convertObjectArrayToArrayAny(array: Array[Object]) : Array[Any] = {
     array.map(x => x match {
       case z: java.lang.Short => z.shortValue()
@@ -68,6 +67,6 @@ object GemFireRowHelper {
       case z: java.lang.Boolean => z.booleanValue()
       case _ => x.asInstanceOf[Any]
     })
-  }
+  }*/
 }
 

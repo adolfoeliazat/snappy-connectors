@@ -19,7 +19,7 @@ package io.snappydata.spark.gemfire.connector.internal.rdd.behaviour
 import scala.reflect.ClassTag
 
 import io.snappydata.spark.gemfire.connector.internal.DefaultGemFireConnectionManager
-import io.snappydata.spark.gemfire.connector.internal.gemfirefunctions.shared.GemFireRow
+import io.snappydata.spark.gemfire.connector.internal.GemFireRow
 import io.snappydata.spark.gemfire.connector.internal.rdd.{GemFireRDDPartition, GemFireRegionRDD}
 
 import org.apache.spark.sql.catalyst.expressions.GenericRow
@@ -49,17 +49,10 @@ class ExposeRegion[K: ClassTag, V: ClassTag, T: ClassTag] extends ComputeLogic[K
 
 object ExposeRegion {
 
-  def valueExtractor(arr: Array[Object]) : GenericRow = new GenericRow(arr.map(x => {
+  def valueExtractor(arr: Array[Any]) : GenericRow = new GenericRow(arr.map(x => {
     x match {
-      case gfRow: GemFireRow => valueExtractor(gfRow.getArray)
-      case z: java.lang.Byte => z.byteValue()
-      case z: java.lang.Short => z.shortValue()
-      case z: java.lang.Integer => z.intValue()
-      case z: java.lang.Float => z.floatValue()
-      case z: java.lang.Long => z.longValue()
-      case z: java.lang.Double => z.doubleValue()
-      case z: java.lang.Boolean => z.booleanValue()
-      case _ => x.asInstanceOf[Any]
+       case gfRow: GemFireRow => valueExtractor(gfRow.getArray)
+       case _ => x
     }
   }))
 }

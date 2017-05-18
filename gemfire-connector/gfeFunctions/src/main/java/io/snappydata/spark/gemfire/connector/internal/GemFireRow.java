@@ -14,7 +14,7 @@
  * permissions and limitations under the License. See accompanying
  * LICENSE file.
  */
-package io.snappydata.spark.gemfire.connector.internal.gemfirefunctions.shared;
+package io.snappydata.spark.gemfire.connector.internal;
 
 
 import java.io.*;
@@ -26,6 +26,8 @@ import java.util.BitSet;
 import com.gemstone.gemfire.DataSerializable;
 import com.gemstone.gemfire.DataSerializer;
 import com.gemstone.gemfire.internal.cache.GemFireCacheImpl;
+import io.snappydata.spark.gemfire.connector.internal.gemfirefunctions.shared.NonVersionedHeapDataOutputStream;
+import io.snappydata.spark.gemfire.connector.internal.gemfirefunctions.shared.SchemaMappings;
 
 public class GemFireRow implements DataSerializable {
 
@@ -33,6 +35,7 @@ public class GemFireRow implements DataSerializable {
   private volatile Object[] deser = null;
   private volatile byte[] ser = null;
   private static int ADDRESS_BITS_PER_WORD = 6;
+  public static long serialVersionUID = 1362354784026L;
 
   public GemFireRow() {
   }

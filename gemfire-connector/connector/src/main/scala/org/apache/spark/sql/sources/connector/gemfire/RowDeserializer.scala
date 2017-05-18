@@ -21,7 +21,7 @@ import java.io.DataInput
 import java.sql.Timestamp
 
 import com.gemstone.gemfire.DataSerializer
-import io.snappydata.spark.gemfire.connector.internal.gemfirefunctions.shared.GemFireRow
+import io.snappydata.spark.gemfire.connector.internal.GemFireRow
 
 import org.apache.spark.sql.catalyst.expressions.GenericRow
 import org.apache.spark.sql.types._

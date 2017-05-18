@@ -7,7 +7,7 @@ import com.gemstone.gemfire.DataSerializer;
 import com.gemstone.gemfire.cache.execute.ResultSender;
 import com.gemstone.gemfire.internal.cache.CachedDeserializable;
 
-import io.snappydata.spark.gemfire.connector.internal.gemfirefunctions.shared.GemFireRow;
+import io.snappydata.spark.gemfire.connector.internal.GemFireRow;
 import io.snappydata.spark.gemfire.connector.internal.gemfirefunctions.shared.NonVersionedHeapDataOutputStream;
 
 public class RowStreamingResultSender<T>  extends ConnectionStreamingResultSender<T> {

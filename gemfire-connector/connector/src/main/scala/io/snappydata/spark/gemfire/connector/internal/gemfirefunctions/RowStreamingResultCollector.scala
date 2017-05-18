@@ -23,7 +23,7 @@ import scala.reflect.ClassTag
 import com.gemstone.gemfire.DataSerializer
 import com.gemstone.gemfire.internal.ByteArrayDataInput
 import com.gemstone.gemfire.internal.shared.Version
-import io.snappydata.spark.gemfire.connector.internal.gemfirefunctions.shared.GemFireRow
+import io.snappydata.spark.gemfire.connector.internal.GemFireRow
 import io.snappydata.spark.gemfire.connector.internal.gemfirefunctions.shared.StructStreamingResult._
 
 import org.apache.spark.sql.sources.connector.gemfire.RowDeserializer

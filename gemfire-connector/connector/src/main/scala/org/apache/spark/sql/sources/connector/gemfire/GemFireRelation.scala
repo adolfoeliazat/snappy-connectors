@@ -11,7 +11,7 @@ import scala.reflect.{ClassTag, classTag}
 
 import io.snappydata.spark.gemfire.connector.GemFireDataFrameFunctions
 import io.snappydata.spark.gemfire.connector.internal.DefaultGemFireConnectionManager
-import io.snappydata.spark.gemfire.connector.internal.gemfirefunctions.shared.GemFireRow
+import io.snappydata.spark.gemfire.connector.internal.GemFireRow
 import io.snappydata.spark.gemfire.connector.internal.rdd.behaviour.ComputeLogic
 import io.snappydata.spark.gemfire.connector.internal.rdd.{GemFireRDDPartition, GemFireRegionRDD}
 

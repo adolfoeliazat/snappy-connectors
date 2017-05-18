@@ -18,7 +18,7 @@ package io.snappydata.spark.gemfire.connector
 
 import io.snappydata.spark.gemfire.connector.internal.rdd.{GemFireJoinRDD, GemFireOuterJoinRDD, GemFirePairRDDWriter}
 import io.snappydata.spark.gemfire.connector.internal.DefaultGemFireConnectionManager
-import io.snappydata.spark.gemfire.connector.internal.gemfirefunctions.shared.GemFireRow
+import io.snappydata.spark.gemfire.connector.internal.GemFireRow
 
 import org.apache.spark.Logging
 import org.apache.spark.api.java.function.Function
@@ -166,8 +166,10 @@ class GemFireDataFrameFunctions(val df: DataFrame) extends Serializable with Log
     } */
     val topSchemaCode = GemFireRowHelper.getSchemaCode(df.schema)
     val topSchema = df.schema
+    val nestedStructMappings = GemFireDataFrameFunctions.getStructPosMapping(topSchema)
     val pairRDD = df.rdd.map(row => (keyExtractor(row),
-        GemFireDataFrameFunctions.valueExtractor(row, topSchema, topSchemaCode))
+        GemFireDataFrameFunctions.valueExtractor(row, topSchemaCode,
+          nestedStructMappings))
     )
     val writer = new GemFirePairRDDWriter[K, GemFireRow](regionPath, opConf)
     pairRDD.sparkContext.runJob(pairRDD, writer.write _)
@@ -176,25 +178,30 @@ class GemFireDataFrameFunctions(val df: DataFrame) extends Serializable with Log
 }
 
 object GemFireDataFrameFunctions {
-  def valueExtractor(row: Row, schema: StructType, schemaCode: Array[Byte]): GemFireRow = {
-    val elements = row.toSeq.zip(schema).map {
-      case (elem, sf) => elem match {
-        case r: Row => valueExtractor(r,
-          sf.dataType.asInstanceOf[StructType],
-          GemFireRowHelper.getSchemaCode(sf.dataType.asInstanceOf[StructType]))
-        case x: Any => (x match {
-          case z: Byte => java.lang.Byte.valueOf(z)
-          case z: Short => java.lang.Short.valueOf(z)
-          case z: Int => java.lang.Integer.valueOf(z)
-          case z: Float => java.lang.Float.valueOf(z)
-          case z: Long => java.lang.Long.valueOf(z)
-          case z: Double => java.lang.Double.valueOf(z)
-          case z: Boolean => java.lang.Boolean.valueOf(z)
-          case _ => x
-        }).asInstanceOf[AnyRef]
-        case _ => null
+  def valueExtractor(row: Row, schemaCode: Array[Byte],
+      nestedStructMappings: Seq[(Int, StructType)]): GemFireRow = {
+    val elements = Array.tabulate[Any](row.length)(i => row(i))
+    if ( !nestedStructMappings.isEmpty) {
+      nestedStructMappings.foreach {
+        case (pos, struct) => {
+          val subRow = elements(pos).asInstanceOf[Row]
+          elements(pos) = valueExtractor(subRow, GemFireRowHelper.getSchemaCode(struct),
+            getStructPosMapping(struct))
+        }
       }
-    }.toArray
+    }
     new GemFireRow(schemaCode, elements, null)
+
+  }
+
+  def getStructPosMapping(schema: StructType): Seq[(Int, StructType)] = {
+    schema.zipWithIndex.filter {
+      case (sf, i) => sf.dataType match {
+        case _: StructType => true
+        case _ => false
+      }
+    }.map{
+      case (sf, i) => (i, sf.dataType.asInstanceOf[StructType])
+    }
   }
 }
