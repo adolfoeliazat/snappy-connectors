@@ -404,7 +404,19 @@ object GemFireRelation {
       val keyType = inferDataType(className)
       if (keyType.isDefined) {
         (1, (e: Any, array: Array[Any]) => {
-          array(0) = e
+          array(0) = if (keyType.isInstanceOf[NumericType]) {
+            e match {
+              case x: java.lang.Byte => x.byteValue
+              case x: java.lang.Short => x.shortValue
+              case x: java.lang.Integer => x.intValue
+              case x: java.lang.Long => x.longValue
+              case x: java.lang.Float => x.floatValue
+              case x: java.lang.Double => x.doubleValue
+              case _ => e
+            }
+          } else {
+            e
+          }
         })
       } else {
         getLengthAndExtractorForBeanClass(className, 0)
