@@ -39,7 +39,10 @@ object GemFireRowHelper {
     StructType -> structtypee )
 
   def getSchemaCode(schema: StructType): Array[Byte] = schema.map(sf =>
-    GemFireRowHelper.mapping.get(sf.dataType).getOrElse(unoptimizedtype)).toArray
+    GemFireRowHelper.mapping.get(sf.dataType).getOrElse( sf.dataType match {
+      case _: StructType => structtypee
+      case _ => unoptimizedtype
+    })).toArray
 
 
   def convertNestedGemFireRowToRow(topLevelValueSchema: StructType,

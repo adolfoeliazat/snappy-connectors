@@ -46,7 +46,7 @@ class RowStreamingResultCollector[T: ClassTag](desc: String, schema: StructType)
           tmpInput.initialize(arr, Version.CURRENT)
           DataSerializer.readObject(tmpInput).asInstanceOf[GemFireRow].getArray
         case UNSER_DATA =>
-          RowDeserializer.readArrayDataWithoutTopSchema(new DataInputStream(input), schema)
+          RowDeserializer.readArrayDataWithoutTopSchema(input, schema)
         case BYTEARR_DATA =>
           DataSerializer.readByteArray(input).asInstanceOf[Object]
         case _ =>

@@ -22,8 +22,6 @@ import java.sql.Timestamp
 
 import com.gemstone.gemfire.DataSerializer
 import io.snappydata.spark.gemfire.connector.internal.GemFireRow
-
-import org.apache.spark.sql.catalyst.expressions.GenericRow
 import org.apache.spark.sql.types._
 
 object RowDeserializer {
@@ -51,7 +49,7 @@ object RowDeserializer {
             val time = DataSerializer.readPrimitiveLong(dis)
             deser(i) = new java.sql.Date(time)
           }
-          case _: TimestampType => {
+          case TimestampType => {
             val time = DataSerializer.readPrimitiveLong(dis)
             val nano = DataSerializer.readPrimitiveInt(dis)
             val ts = new Timestamp(time)
