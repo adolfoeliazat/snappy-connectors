@@ -33,21 +33,21 @@ public class GemFireRow implements DataSerializable {
 
   private volatile byte[] schemaCode = null;
   private volatile Object[] deser = null;
-  private volatile byte[] ser = null;
+  //private volatile byte[] ser = null;
   private static int ADDRESS_BITS_PER_WORD = 6;
   public static long serialVersionUID = 1362354784026L;
 
   public GemFireRow() {
   }
 
-  public GemFireRow(byte[] schemaCode, Object[] deser, byte[] ser) {
+  public GemFireRow(byte[] schemaCode, Object[] deser) {
     this.schemaCode = schemaCode;
     this.deser = deser;
-    this.ser = ser;
   }
 
   @Override
   public void toData(DataOutput dataOutput) throws IOException {
+    /*
     if (ser != null) {
       DataSerializer.writePrimitiveInt(ser.length, dataOutput);
       this.writeSchema(dataOutput);
@@ -61,17 +61,24 @@ public class GemFireRow implements DataSerializable {
       int serDataSize = endSize - initialSize ;
       DataSerializer.writePrimitiveInt(serDataSize, dataOutput);
       hdos.sendTo(dataOutput);
-    }
+     }
+     */
+    NonVersionedHeapDataOutputStream hdos = new NonVersionedHeapDataOutputStream();
+    this.writeSchema(hdos);
+    this.writeData(hdos);
+    hdos.sendTo(dataOutput);
   }
 
 
   public void toDataWithoutTopSchema(NonVersionedHeapDataOutputStream hdos) throws IOException {
+    /*
     if (ser != null) {
       hdos.write(ser);
     } else {
+    */
       this.writeData(hdos);
-      this.ser = hdos.toByteArray();
-    }
+     // this.ser = hdos.toByteArray();
+    //}
   }
 
   private void writeSchema(DataOutput hdos) throws IOException {
@@ -157,26 +164,30 @@ public class GemFireRow implements DataSerializable {
 
 
   @Override
-  public void fromData(DataInput dataInput) throws IOException {
-    int dataLength = DataSerializer.readPrimitiveInt(dataInput);
+  public void fromData(DataInput dataInput) throws IOException, ClassNotFoundException {
+   // int dataLength = DataSerializer.readPrimitiveInt(dataInput);
     schemaCode = DataSerializer.readByteArray(dataInput);
-    ser = new byte[dataLength];
-    dataInput.readFully(ser);
+    //ser = new byte[dataLength];
+    //dataInput.readFully(ser);
+    this.deser = this.readArrayData(dataInput);
   }
 
   public Object[] getArray() throws IOException, ClassNotFoundException {
+    /*
     if (deser == null) {
       DataInputStream dis = new DataInputStream(new ByteArrayInputStream(this.ser));
       this.deser = this.readArrayData(dis);
     }
+    */
     return deser;
   }
 
   public Object get(int pos) throws IOException, ClassNotFoundException {
-    return getArray()[pos];
+    // return getArray()[pos];
+    return this.deser[pos];
   }
 
-  public Object[] readArrayData(DataInputStream dis) throws IOException, ClassNotFoundException {
+  public Object[] readArrayData(DataInput dis) throws IOException, ClassNotFoundException {
     int numLongs = getNumLongsForBitSet(schemaCode.length);
     long[] masks = new long[numLongs];
     for (int i = 0; i < numLongs; ++i) {

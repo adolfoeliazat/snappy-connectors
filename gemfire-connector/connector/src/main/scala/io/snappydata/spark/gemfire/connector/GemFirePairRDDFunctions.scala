@@ -190,7 +190,7 @@ object GemFireDataFrameFunctions {
         }
       }
     }
-    new GemFireRow(schemaCode, elements, null)
+    new GemFireRow(schemaCode, elements)
 
   }
 

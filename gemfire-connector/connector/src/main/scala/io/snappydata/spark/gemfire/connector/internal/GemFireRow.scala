@@ -26,16 +26,17 @@ import io.snappydata.spark.gemfire.connector.internal.gemfirefunctions.shared.{N
 
 @SerialVersionUID(1362354784026L)
 class GemFireRow(var schemaCode: Array[Byte],
-    var deser: Array[Any], var ser: Array[Byte]) extends DataSerializable{
+    var deser: Array[Any]) extends DataSerializable{
 
 
   def this(){
-    this(null, null, null)
+    this(null, null)
   }
 
 
   @throws[IOException]
   def toData(dataOutput: DataOutput) {
+   /*
     if (ser != null) {
       DataSerializer.writePrimitiveInt(ser.length, dataOutput)
       this.writeSchema(dataOutput)
@@ -51,10 +52,16 @@ class GemFireRow(var schemaCode: Array[Byte],
       DataSerializer.writePrimitiveInt(serDataSize, dataOutput)
       hdos.sendTo(dataOutput)
     }
+    */
+   val hdos: NonVersionedHeapDataOutputStream = new NonVersionedHeapDataOutputStream
+    this.writeSchema(hdos)
+    this.writeData(hdos)
+    hdos.sendTo(dataOutput)
   }
 
   @throws[IOException]
   def toDataWithoutTopSchema(hdos: NonVersionedHeapDataOutputStream) {
+    /*
     if (ser != null) {
       hdos.write(ser)
     }
@@ -62,6 +69,8 @@ class GemFireRow(var schemaCode: Array[Byte],
       this.writeData(hdos)
       this.ser = hdos.toByteArray
     }
+    */
+    this.writeData(hdos)
   }
 
   @throws[IOException]
@@ -122,31 +131,37 @@ class GemFireRow(var schemaCode: Array[Byte],
 
   @throws[IOException]
   def fromData(dataInput: DataInput) {
+    /*
     val dataLength: Int = DataSerializer.readPrimitiveInt(dataInput)
     schemaCode = DataSerializer.readByteArray(dataInput)
     ser = new Array[Byte](dataLength)
     dataInput.readFully(ser)
+    */
+    schemaCode = DataSerializer.readByteArray(dataInput)
+    this.deser = this.readArrayData(dataInput)
   }
 
   @throws[IOException]
   @throws[ClassNotFoundException]
   def getArray: Array[Any] = {
+    /*
     if (deser == null) {
       val dis: DataInputStream = new DataInputStream(new ByteArrayInputStream(this.ser))
       this.deser = this.readArrayData(dis)
     }
+    */
     return deser
   }
 
   @throws[IOException]
   @throws[ClassNotFoundException]
   def get(pos: Int): Any = {
-    return getArray(pos)
+    return this.deser(pos)
   }
 
   @throws[IOException]
   @throws[ClassNotFoundException]
-  def readArrayData(dis: DataInputStream): Array[Any] = {
+  def readArrayData(dis: DataInput): Array[Any] = {
     val numLongs: Int = GemFireRow.getNumLongsForBitSet(schemaCode.length)
     val masks = Array.fill[Long](numLongs)(dis.readLong)
 
