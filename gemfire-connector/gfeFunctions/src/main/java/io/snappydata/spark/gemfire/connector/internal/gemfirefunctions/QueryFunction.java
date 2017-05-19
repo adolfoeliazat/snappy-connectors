@@ -102,7 +102,10 @@ public class QueryFunction implements Function {
 
           if (buf.size() > CHUNK_SIZE) {
             sender.sendResult(buf.toByteArray());
-            logger.debug("OQL query=" + queryString + " bucket set=" + bucketSet + " sendResult(), data size=" + buf.size());
+            if (logger.isDebugEnabled()) {
+              logger.debug("OQL query=" + queryString +
+                  " bucket set=" + bucketSet + " sendResult(), data size=" + buf.size());
+            }
             buf.reset();
           }
         }
@@ -119,9 +122,12 @@ public class QueryFunction implements Function {
       }
 
       sender.lastResult(buf.toByteArray());
-      logger.debug("OQL query=" + queryString + " bucket set=" + bucketSet + " lastResult(), data size=" + buf.size());
+      if (logger.isDebugEnabled()) {
+        logger.debug("OQL query=" + queryString + " bucket set=" + bucketSet + " lastResult(), data size=" + buf.size());
+      }
       buf.reset();
     } catch (Exception e) {
+      logger.error("QueryFunction:: Exception in executing function", e);
       throw new FunctionException(e);
     }
   }

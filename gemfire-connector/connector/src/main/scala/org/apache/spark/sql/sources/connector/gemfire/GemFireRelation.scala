@@ -38,9 +38,22 @@ case class GemFireRelation(@transient override val sqlContext: SnappyContext, re
   private val valueTag = ClassTag[Any](valueConstraint.map(MainUtils.classForName(_)).
       getOrElse(classOf[Any]))
 
-
+  if (this.isDebugEnabled) {
+    this.logDebug(s"GemFireRelation::constructor:run time class in keyTag  = "
+        + keyTag.runtimeClass.getName)
+    this.logDebug(s"GemFireRelation::constructor:run time class in valueTag  = "
+        + valueTag.runtimeClass.getName)
+  }
   val inferredKeySchema = StructType(keyConstraint.map(x => {
-    val (inferedKeyType, nullableKey) = JavaTypeInference.inferDataType(keyTag.runtimeClass)
+    // check if it matches any primitie types
+    val primitiveTypeOp = GemFireRelation.inferDataType(keyTag.runtimeClass)
+    if (this.isDebugEnabled) {
+      this.logDebug(s"GemFireRelation::constructor: key Class " +
+          s"match with scala primitive   = " + primitiveTypeOp)
+    }
+
+    val (inferedKeyType, nullableKey) = primitiveTypeOp.map((_, false)).getOrElse(
+      JavaTypeInference.inferDataType(keyTag.runtimeClass))
     convertDataTypeToStructFields(inferedKeyType, nullableKey,
       primaryKeyColumnName.getOrElse(Constants.defaultKeyColumnName), providedSchema)
   }).getOrElse(Array.empty[StructField]))
@@ -100,8 +113,10 @@ case class GemFireRelation(@transient override val sqlContext: SnappyContext, re
             s" Row objects in GemFire")
       }
       StructType(valueConstraint.map(x => {
-        val (inferedValType, nullableValue) = JavaTypeInference.
-            inferDataType(valueTag.runtimeClass)
+        // check if it matches any primitie types
+        val primitiveTypeOp = GemFireRelation.inferDataType(valueTag.runtimeClass)
+        val (inferedValType, nullableValue) = primitiveTypeOp.map((_, false)).
+            getOrElse(JavaTypeInference.inferDataType(valueTag.runtimeClass))
         convertDataTypeToStructFields(inferedValType, nullableValue,
           valueColumnName.getOrElse(Constants.defaultValueColumnName), None)
       }).getOrElse(Array.empty[StructField]))
@@ -142,12 +157,17 @@ case class GemFireRelation(@transient override val sqlContext: SnappyContext, re
       spansOnlyValue: Boolean): (String, StructField) = {
     val index = this.inferredValueSchema.indexWhere(sf =>
       sf.name.equalsIgnoreCase(attribName))
+    if (this.isDebugEnabled) {
+      logDebug(s"GemFireRelation: conditionOQLAttributeForCaseDomain. " +
+          s"attribute name = $attribName " +
+          "inferred value schema = " + this.inferredValueSchema)
+    }
     if (index != -1) {
-      ( if (spansOnlyValue) {
+      (if (spansOnlyValue) {
         "x"
       } else {
         "x.getValue"
-      } + (if (this.inferredValueSchema.size == 1) "" else s".$attribName")) ->
+      }) + (if (this.inferredValueSchema.size == 1) "" else s".$attribName") ->
           this.inferredValueSchema(index)
     } else {
       if (spansOnlyValue) {
@@ -404,7 +424,7 @@ object GemFireRelation {
       val keyType = inferDataType(className)
       if (keyType.isDefined) {
         (1, (e: Any, array: Array[Any]) => {
-          array(0) = if (keyType.isInstanceOf[NumericType]) {
+          array(0) = if (keyType.get.isInstanceOf[NumericType]) {
             e match {
               case x: java.lang.Byte => x.byteValue
               case x: java.lang.Short => x.shortValue
@@ -488,34 +508,100 @@ object GemFireRelation {
   }
 
 
+/*
   private def inferDataType(c: Class[_]): Option[DataType] = {
     c match {
-
       case c: Class[_] if c == classOf[String] => Some(StringType)
       case c: Class[_] if c == classOf[java.lang.Short] => Some(ShortType)
-      case c: Class[_] if c == classOf[Short] => Some(ShortType)
+      case c: Class[_] if c == classOf[scala.Short] => Some(ShortType)
       case c: Class[_] if c == classOf[java.lang.Integer] => Some(IntegerType)
-      case c: Class[_] if c == classOf[Int] => Some(IntegerType)
+      case c: Class[_] if c == classOf[scala.Int] => Some(IntegerType)
       case c: Class[_] if c == classOf[java.lang.Long] => Some(LongType)
-      case c: Class[_] if c == classOf[Long] => Some(LongType)
+      case c: Class[_] if c == classOf[scala.Long] => Some(LongType)
       case c: Class[_] if c == classOf[java.lang.Double] => Some(DoubleType)
-      case c: Class[_] if c == classOf[Double] => Some(DoubleType)
+      case c: Class[_] if c == classOf[scala.Double] => Some(DoubleType)
       case c: Class[_] if c == classOf[java.lang.Byte] => Some(ByteType)
-      case c: Class[_] if c == classOf[Byte] => Some(ByteType)
+      case c: Class[_] if c == classOf[scala.Byte] => Some(ByteType)
       case c: Class[_] if c == classOf[java.lang.Float] => Some(FloatType)
-      case c: Class[_] if c == classOf[Float] => Some(FloatType)
+      case c: Class[_] if c == classOf[scala.Float] => Some(FloatType)
       case c: Class[_] if c == classOf[java.lang.Boolean] => Some(BooleanType)
-      case c: Class[_] if c == classOf[Boolean] => Some(BooleanType)
+      case c: Class[_] if c == classOf[scala.Boolean] => Some(BooleanType)
       case c: Class[_] if c == classOf[java.math.BigDecimal] => Some(DecimalType.SYSTEM_DEFAULT)
-      case c: Class[_] if c == classOf[BigDecimal] => Some(DecimalType.SYSTEM_DEFAULT)
+      case c: Class[_] if c == classOf[scala.BigDecimal] => Some(DecimalType.SYSTEM_DEFAULT)
       case c: Class[_] if c == classOf[java.math.BigInteger] => Some(DecimalType.BigIntDecimal)
-      case c: Class[_] if c == classOf[BigInt] => Some(DecimalType.BigIntDecimal)
+      case c: Class[_] if c == classOf[scala.BigInt] => Some(DecimalType.BigIntDecimal)
       case c: Class[_] if c == classOf[java.sql.Date] => Some(DateType)
       case c: Class[_] if c == classOf[java.sql.Timestamp] => Some(TimestampType)
       case _ => None
     }
 
   }
+  */
+
+  private def is[T <: Any : Manifest](implicit cls: Class[_]) = cls == manifest[T].runtimeClass
+
+
+
+private def inferDataType(c: Class[_]): Option[DataType] = {
+  implicit  val arg = c
+  val className = c.getName
+  if (is[String]) {
+    Some(StringType)
+  } else if (is[java.lang.Short] || is[Short] || className == "scala.Short") {
+    Some(ShortType)
+  } else if (is[java.lang.Integer] || is[Int] || className == "scala.Int") {
+    Some(IntegerType)
+  } else if (is[java.lang.Long] || is[Long] || className == "scala.Long") {
+    Some(LongType)
+  } else if (is[java.lang.Double] || is[Double] || className == "scala.Double") {
+    Some(DoubleType)
+  } else if (is[java.lang.Byte] || is[Byte]|| className == "scala.Byte") {
+    Some(ByteType)
+  } else if (is[java.lang.Float] || is[Float] || className == "scala.Float") {
+    Some(FloatType)
+  } else if (is[java.lang.Boolean] || is[Boolean]|| className == "scala.Boolean") {
+    Some(BooleanType)
+  } else if (is[java.math.BigDecimal] || is[BigDecimal]) {
+    Some(DecimalType.SYSTEM_DEFAULT)
+  } else if (is[java.math.BigInteger] || is[BigInt]) {
+    Some(DecimalType.BigIntDecimal)
+  } else if (is[java.sql.Date]) {
+    Some(DateType)
+  } else if (is[java.sql.Timestamp]) {
+    Some(TimestampType)
+  } else {
+    None
+  }
+  /*
+  c match {
+    case c: Class[_] if c == classOf[String] => Some(StringType)
+    case c: Class[_] if c == classOf[java.lang.Short] => Some(ShortType)
+    case c: Class[_] if c == classOf[scala.Short] => Some(ShortType)
+    case c: Class[_] if c == classOf[java.lang.Integer] => Some(IntegerType)
+    case c: Class[_] if c == classOf[scala.Int] => Some(IntegerType)
+    case c: Class[_] if c == classOf[java.lang.Long] => Some(LongType)
+    case c: Class[_] if c == classOf[scala.Long] => Some(LongType)
+    case c: Class[_] if c == classOf[java.lang.Double] => Some(DoubleType)
+    case c: Class[_] if c == classOf[scala.Double] => Some(DoubleType)
+    case c: Class[_] if c == classOf[java.lang.Byte] => Some(ByteType)
+    case c: Class[_] if c == classOf[scala.Byte] => Some(ByteType)
+    case c: Class[_] if c == classOf[java.lang.Float] => Some(FloatType)
+    case c: Class[_] if c == classOf[scala.Float] => Some(FloatType)
+    case c: Class[_] if c == classOf[java.lang.Boolean] => Some(BooleanType)
+    case c: Class[_] if c == classOf[scala.Boolean] => Some(BooleanType)
+    case c: Class[_] if c == classOf[java.math.BigDecimal] => Some(DecimalType.SYSTEM_DEFAULT)
+    case c: Class[_] if c == classOf[scala.BigDecimal] => Some(DecimalType.SYSTEM_DEFAULT)
+    case c: Class[_] if c == classOf[java.math.BigInteger] => Some(DecimalType.BigIntDecimal)
+    case c: Class[_] if c == classOf[scala.BigInt] => Some(DecimalType.BigIntDecimal)
+    case c: Class[_] if c == classOf[java.sql.Date] => Some(DateType)
+    case c: Class[_] if c == classOf[java.sql.Timestamp] => Some(TimestampType)
+    case _ => None
+  }
+  */
+
+}
+
+
 
   def computeForRegionAsRows[K: ClassTag, V: ClassTag](keyConstraint: Option[String],
       valueConstraint: Option[String], rowObjectLength: Option[Int]): ComputeLogic[K, V, Row] = {
