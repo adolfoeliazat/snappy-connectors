@@ -26,10 +26,11 @@ import org.apache.spark.sql.types.{StructType, _}
 import org.apache.spark.sql.{SQLContext, SaveMode, SnappyContext, _}
 import org.apache.spark.util.{Utils => MainUtils}
 
-case class GemFireRelation(@transient override val sqlContext: SnappyContext, regionPath: String,
-    val primaryKeyColumnName: Option[String], valueColumnName: Option[String],
-    keyConstraint: Option[String], valueConstraint: Option[String],
-    providedSchema: Option[StructType], val asSelect: Boolean)
+case class GemFireRelation(@transient override val sqlContext: SnappyContext,
+    val regionPath: String, val primaryKeyColumnName: Option[String],
+    val valueColumnName: Option[String], val keyConstraint: Option[String],
+    val valueConstraint: Option[String], val providedSchema: Option[StructType],
+    val asSelect: Boolean)
     extends BaseRelation with TableScan with SchemaInsertableRelation
         with PrunedFilteredScan with Logging {
 
@@ -723,7 +724,7 @@ private def inferDataType(c: Class[_]): Option[DataType] = {
 
 final class DefaultSource
     extends RelationProvider with SchemaRelationProvider with CreatableRelationProvider
-        with DataSourceRegister {
+        with DataSourceRegister with Logging {
 
   def shortName(): String = "GemFire"
 
@@ -734,7 +735,7 @@ final class DefaultSource
     val params = new CaseInsensitiveMutableHashMap(options)
 
     val snc = sqlContext.asInstanceOf[SnappyContext]
-
+    val tableName = options.get(JdbcExtendedUtils.DBTABLE_PROPERTY)
     val regionPath = params.getOrElse(Constants.REGION_PATH, throw OtherUtils.analysisException(
       "GemFire Region Path is missing"))
     val pkColumnName = params.get(Constants.PRIMARY_KEY_COLUMN_NAME)
@@ -745,16 +746,24 @@ final class DefaultSource
       throw OtherUtils.analysisException("Either Key Class  or value class  " +
           "need to be provided for the table definition")
     }
-    GemFireRelation(snc, regionPath, pkColumnName, valueColumnName, kc, vc,
-      schemaOpt, asSelect)
-    /*
+    val relation = GemFireRelation(snc, regionPath, pkColumnName, valueColumnName,
+      kc, vc, schemaOpt, asSelect)
+
     val catalog = sqlContext.sparkSession.asInstanceOf[SnappySession].sessionCatalog
-    catalog.registerDataSourceTable(
-      catalog.newQualifiedTableName(regionPath), Some(relation.schema),
-      Array.empty[String], classOf[connector.gemfire.DefaultSource].getCanonicalName,
-      options, relation)
-    relation
-    */
+    if (this.isDebugEnabled) {
+      this.logDebug("GemFireRelation :options passed in table creation =" + options)
+    }
+   if (tableName.isDefined) {
+     if (this.isDebugEnabled) {
+       this.logDebug("GemFireRelation :registering relation with name = " + tableName.get)
+     }
+     catalog.registerDataSourceTable(
+       catalog.newQualifiedTableName(tableName.get), Some(relation.schema),
+       Array.empty[String], classOf[connector.gemfire.DefaultSource].getCanonicalName,
+       options, relation)
+
+   }
+   relation
 
   }
 
