@@ -127,34 +127,38 @@ NEXT_STEP_NAME : END
 
 ### Save a DataFrame into GemFire
 To save a DataFrame ( i.e DataSet of Row objects) into GemFire, use the following API, available as an implicit definition
+
 ```
+import io.snappydata.spark.gemfire.connector
+
 DataFrame.saveToGemFire[K](
       regionPath: String,
       keyExtractor: Row => K,
       opConf: Map[String, String] = Map.empty)
-      ```
+```      
  Here K refers to the type of Key instance which will be used in  GemFire for storing the data.
  keyExtractor is a function which generates key of type K , for every Row object. The parameter current Row is  made available to the extractor function.
 ```      
 testDF.saveToGemFire[Long]("gemTable1", row => row.getAs("id").asInstanceOf[Long]) 
 ```
 
-When a DataFrame is saved into a Region, in the GemFire region the value is stored as Object [ ]. This needs to be taken into consideration when directly operating on the region, in the GemFire cluster
+When a DataFrame is saved into a Region, in the GemFire region the value is stored as a GemFireRow object. This needs to be taken into consideration when directly operating on the region, in the GemFire cluster
+### Save a DataFrame into GemFire using DataSource API via DataFrameWriter
+it is possible to save a dataframe in gemfire region using DataFrame.write API
 
-### Expose GemFire Region As RDD
-The same API is used to expose both replicated and partitioned region as RDDs. 
 ```
-scala> val rdd = sc.gemfireRegion[String, String]("gemTable1")
+val bsegDF = csvDF.withColumn("id", monotonically_increasing_id)
+
+// The Gem Connector now is compatible with Spark DataSource API ...
+// Save to GemFire region
+bsegDF.write.format("org.apache.spark.sql.sources.connector.gemfire.DefaultSource").  
+      option("regionPath", "bseg1").
+     option("primaryKeyColumnName", "id").
+     option("valueClass", "org.apache.spark.sql.Row").save()
+```
+In the above example, a DataFrame is being saved in a gemfire region "bseg1". The DataFrame contains a column id which will be the key against which the Row will be stored in GemFire. The connector is informed about the key column by the option "primaryKeyColumnName"
 
 
-scala> rdd.foreach(println)
-(1,one)
-(3,three)
-(2,two)
-
-
-Note: use the right type of region key and value, otherwise you'll get
-ClassCastException. 
 
 
 Next: [Loading Data from GemFire](3_loading.md)

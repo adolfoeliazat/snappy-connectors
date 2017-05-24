@@ -1,14 +1,59 @@
-## Loading Data from GemFire
 
-To expose full data set of a GemFire region as a Spark
-RDD, call `gemfireRegion` method on the SparkContext object.
+### Expose GemFire Region As RDD
+To expose full data set of a GemFire region as a Spark RDD, call `gemfireRegion` method on the SparkContext object.
+The same API is used to expose both replicated and partitioned region as RDDs. 
 
 ```
-val rdd = sc.gemfireRegion("region path")
+scala> val rdd = sc.gemfireRegion[String, String]("gemTable1")
+
+scala> rdd.foreach(println)
+(1,one)
+(3,three)
+(2,two)
 ```
 
+Note: use the right type of region key and value, otherwise you'll get
+ClassCastException. 
 
+### Expose GemFire Region Containing Rows ( GemFireRows) As An External Table
+```
+val externalBsegTable = snc.createExternalTable("bsegInGem",      "org.apache.spark.sql.sources.connector.gemfire.DefaultSource",
+   schema   ,
+     Map[String, String]("regionPath" -> "bseg1", "valueClass" -> "org.apache.spark.sql.Row"))
+```     
+A GemFire region which  stores or will store Row objects, can be made avaialble to snappydata as an external table. 
+Here the schema is the StructType defining the fields of the Row object being stored in the Region.
 
+If the external table should contain Primary Key Column as well as the Row, then the API would be
+
+```
+val externalBsegTable = snc.createExternalTable("bsegInGem",      "org.apache.spark.sql.sources.connector.gemfire.DefaultSource",
+   keyPlusValueSchema   ,
+     Map[String, String]("regionPath" -> "bseg1", "valueClass" -> "org.apache.spark.sql.Row",
+"keyClass" -> "java.lang.Long"     
+     ))
+```
+In the above case, since Key is also intended to be part of the table, the keyPlusValueSchema should include first StructField as the Primary Key Column followed by the Value schema & keyClass should indicate the type of the Primary Key being used to store the Row in GemFire
+
+### Expose GemFire Region Containing JavaBeans compliant objects  As An External Table
+```
+snc.createExternalTable(externalPersonsTable1,      "org.apache.spark.sql.sources.connector.gemfire.DefaultSource", Map[String, String]("regionPath" -> personsRegionName, "valueClass" -> "load.Person"))
+```
+
+If the GemFire Region contains JavaBeans compliant objects, then specifying valueClass as the fully qualified class name of the Bean object, enables the region to be exposed as an external table.
+The getter methods would be the field names of the columns ( for eg getId would become a column with name id)
+If the table has to include key along with the value, then  keyClass needs to be passed as options ( for eg "keyClass" -> "java.lang.Integer")
+
+### Create An External Table Based On A DataFrame And Store The Data In The Region
+
+```
+bsegDF.write.format("org.apache.spark.sql.sources.connector.gemfire.DefaultSource").  
+      option("regionPath", "bseg1").
+     option("primaryKeyColumnName", "id1").
+     option("valueClass", "org.apache.spark.sql.Row").saveAsTable("bsegTable")
+```
+In the above example, a DataFrame is used to create an external table bsegTable, with the schema same as the DataFrame bsegDF. The primary key column name should be specified for this to work correctly. In the above example, it is assumed that the dataframe contains a column "id1"
+ 
 ## GemFire RDD Partitions
 
 GemFire has two region types: **replicated**, and
