@@ -86,7 +86,9 @@ case class JDBCSource(@transient sqlContext: SQLContext,
 
   private val partitionByQuery: Option[PartitionQueryType] = getParam("partitionByQuery") match {
     case Some(q) if q.startsWith("ordered:") => Some((q.substring("ordered:".length), true, false))
-    case Some(q) if q.startsWith("ranged:") => Some((q.substring("ranged:".length), false, true))
+    case Some(q) if q.startsWith("ranged:") =>
+      // if ranged, we should assume ordered.
+      Some((q.substring("ranged:".length), true, true))
     case Some(q) => Some((q, false, false))
     case None => None
   }
@@ -100,7 +102,7 @@ case class JDBCSource(@transient sqlContext: SQLContext,
 
   private val srcControlConn = {
     val connProps = parameters.foldLeft(new Properties()) {
-      case (prop, (k, v)) if !k.toLowerCase.startsWith("snappydata.cluster.") =>
+      case (prop, (k, v)) if !k.toLowerCase.startsWith("snappydata.") =>
         prop.setProperty(k, v)
         prop
       case (p, _) => p
@@ -139,7 +141,7 @@ case class JDBCSource(@transient sqlContext: SQLContext,
   private lazy val cachedPartitions = cachePartitioningValuesFrom match {
     case Some(q) if partitioner.nonEmpty =>
       determinePartitions(
-        s"( ${q.replaceAll("\\$partitionBy", partitioner.get)} ) getUniqueValuesForCaching",
+        s"( ${q.replaceAll("$partitionBy", partitioner.get)} ) getUniqueValuesForCaching",
         partitioner.get)
     case _ => Array.empty[String]
   }
@@ -157,7 +159,7 @@ case class JDBCSource(@transient sqlContext: SQLContext,
       }
     }
 
-    lastOffset match {
+    lastOffset = lastOffset match {
       case None =>
         tryExecuteQuery(
           s"select $offsetToStrFunc(min($offsetColumn)) newOffset from $dbtable")(fetch)
@@ -175,6 +177,8 @@ case class JDBCSource(@transient sqlContext: SQLContext,
           case o => o
         }
     }
+
+    lastOffset
   }
 
   override def getBatch(start: Option[Offset], end: Offset): DataFrame = {
@@ -188,7 +192,7 @@ case class JDBCSource(@transient sqlContext: SQLContext,
       case Some(col) if partitionByQuery.nonEmpty =>
         val parallelism = sqlContext.sparkContext.defaultParallelism
         val (rangeQuery, isPreOrdered, isAlreadyRanged) = partitionByQuery.map { case (q, o, r) =>
-          (q.replace("\\$getBatch", query).replace("$parallelism", parallelism.toString),
+          (q.replace("$getBatch", query).replace("$parallelism", parallelism.toString),
               o, r)
         }.get
         determinePartitions(s"( $rangeQuery ) getRanges", col,
@@ -221,7 +225,7 @@ case class JDBCSource(@transient sqlContext: SQLContext,
   }
 
   override def commit(end: Offset): Unit = try {
-    lastOffset = Some(end.asInstanceOf[LSN])
+    logDebug(s"About to commit $end")
     // update the state table at source.
     stateTableUpdate.setString(1, lastOffset.get.lsn)
     stateTableUpdate.setString(2, dbtable)
@@ -231,8 +235,11 @@ case class JDBCSource(@transient sqlContext: SQLContext,
           s"$streamStateTable values ('$dbtable', '${lastOffset.get.lsn}') ")
       assert(rowsInserted == 1)
     }
+    srcControlConn.commit()
+    logDebug(s"Committed successfully $end")
   } catch {
     case e: Exception =>
+      logWarning(s"Error committing offset $end", e)
   }
 
   /** Returns the schema of the data from this source */
@@ -251,7 +258,7 @@ case class JDBCSource(@transient sqlContext: SQLContext,
     val uniqueVals = execute(query)
     val partitionField = uniqueVals.schema.fields(0)
     val sorted = if (ordered) {
-      logDebug(s"Assuming already ordered in determining partitions. query -> $query")
+      logDebug(s"Assuming already ordered while determining partitions. query -> $query")
       // already ordered
       uniqueVals.collect()
     } else {
@@ -260,6 +267,17 @@ case class JDBCSource(@transient sqlContext: SQLContext,
     }
 
     if (ranged) {
+      logDebug(s"Assuming already ranged while determining partitions. query -> $query")
+      // expect both inclusive ranges in 1st and 2nd column
+      sorted.map { row =>
+        partitionField.dataType match {
+          case _: NumericType =>
+            s"$partCol >= ${row(0)} and $partCol <= ${row(1)}"
+          case _@(StringType | DateType | TimestampType) =>
+            s"$partCol >= '${row(0)}' and $partCol <= '${row(1)}'"
+        }
+      }
+    } else {
       val parallelism = sqlContext.sparkContext.defaultParallelism
       val slide = sorted.length / parallelism
       if (slide > 0) {
@@ -274,17 +292,6 @@ case class JDBCSource(@transient sqlContext: SQLContext,
       } else {
         Array.empty[String]
       }
-    } else {
-      logDebug(s"Assuming already ranged in determining partitions. query -> $query")
-      // expect both inclusive ranges in 1st and 2nd column
-      sorted.map { row =>
-        partitionField.dataType match {
-          case _: NumericType =>
-            s"$partCol >= ${row(0)} and $partCol <= ${row(1)}"
-          case _@(StringType | DateType | TimestampType) =>
-            s"$partCol >= '${row(0)}' and $partCol <= '${row(0)}'"
-        }
-      }
     }
   }
 
@@ -292,20 +299,28 @@ case class JDBCSource(@transient sqlContext: SQLContext,
     val rs = srcControlConn.getMetaData.getTables(null, null, streamStateTable, null)
     if (!rs.next()) {
       logInfo(s"$streamStateTable table not found. creating ..")
-      if (!srcControlConn.createStatement().execute(s"create table $streamStateTable(" +
+      srcControlConn.createStatement().execute(s"create table $streamStateTable(" +
           " tableName varchar(200) primary key," +
           " lastOffset varchar(100)" +
-          ")")) {
+          ")")
+
+      rs.close()
+      val check = srcControlConn.getMetaData.getTables(null, null, streamStateTable, null)
+      if (!check.next()) {
         logWarning(s"$streamStateTable couldn't be created on the jdbc source $this")
       }
+      check.close()
     }
+    rs.close()
   }
 
   private def execute(query: String,
       partitions: String => Array[String] = _ => Array.empty) = partitions(query) match {
     case parts if parts.nonEmpty =>
+      logDebug(s"About to execute with ${parts.mkString(",")} -> $query")
       reader.jdbc(parameters("url"), query, parts, new Properties())
     case _ =>
+      logDebug(s"About to execute to determine partitions -> $query")
       reader.jdbc(parameters("url"), query, new Properties())
   }
 
