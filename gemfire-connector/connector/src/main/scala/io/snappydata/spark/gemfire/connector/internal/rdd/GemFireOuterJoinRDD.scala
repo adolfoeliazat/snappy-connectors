@@ -38,13 +38,15 @@ class GemFireOuterJoinRDD[T, K, V] private[connector]
   validate()
 
   override def compute(split: Partition, context: TaskContext): Iterator[(T, Option[V])] = {
-    val region = DefaultGemFireConnectionManager.getConnection.getRegionProxy[K, V](regionPath)
+    // TODO: Asif: Get gridName instead of passing None
+    val region = DefaultGemFireConnectionManager.getConnection.getRegionProxy[K, V](regionPath, None)
     if (func == null) computeWithoutFunc(split, context, region)
     else computeWithFunc(split, context, region)
   }
 
   /** T is (K1, V1), and K1 and K are the same type since there's no map function `func` */
-  private def computeWithoutFunc(split: Partition, context: TaskContext, region: Region[K, V]): Iterator[(T, Option[V])] = {
+  private def computeWithoutFunc(split: Partition, context: TaskContext,
+      region: Region[K, V]): Iterator[(T, Option[V])] = {
     val leftPairs = left.iterator(split, context).toList.asInstanceOf[List[(K, _)]]
     val leftKeys = leftPairs.map { case (k, v) => k }.toSet
     // Note: get all will return (key, null) for non-exist entry
@@ -53,7 +55,8 @@ class GemFireOuterJoinRDD[T, K, V] private[connector]
     leftPairs.map { case (k, v) => ((k, v).asInstanceOf[T], Option(rightPairs.get(k))) }.toIterator
   }
 
-  private def computeWithFunc(split: Partition, context: TaskContext, region: Region[K, V]): Iterator[(T, Option[V])] = {
+  private def computeWithFunc(split: Partition, context: TaskContext,
+      region: Region[K, V]): Iterator[(T, Option[V])] = {
     val leftPairs = left.iterator(split, context).toList.map(t => (t, func(t)))
     val leftKeys = leftPairs.map { case (t, k) => k }.toSet
     // Note: get all will return (key, null) for non-exist entry
@@ -64,7 +67,11 @@ class GemFireOuterJoinRDD[T, K, V] private[connector]
 
   override protected def getPartitions: Array[Partition] = left.partitions
 
+
+
   /** Validate region, and make sure it exists. */
-  private def validate(): Unit = DefaultGemFireConnectionManager.getConnection.validateRegion[K, V](regionPath)
+  // TODO: Asif: Get gridName instead of passing None
+  private def validate(): Unit = DefaultGemFireConnectionManager.
+      getConnection.validateRegion[K, V](regionPath, None)
 }
 

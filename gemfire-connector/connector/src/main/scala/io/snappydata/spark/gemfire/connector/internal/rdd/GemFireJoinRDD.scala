@@ -38,13 +38,16 @@ class GemFireJoinRDD[T, K, V] private[connector]
   validate()
 
   override def compute(split: Partition, context: TaskContext): Iterator[(T, V)] = {
-    val region = DefaultGemFireConnectionManager.getConnection.getRegionProxy[K, V](regionPath)
+    // TODO: Asif: Get gridName instead of passing None
+    val region = DefaultGemFireConnectionManager.getConnection.getRegionProxy[K, V](
+      regionPath, None)
     if (func == null) computeWithoutFunc(split, context, region)
     else computeWithFunc(split, context, region)
   }
 
   /** T is (K, V1) since there's no map function `func` */
-  private def computeWithoutFunc(split: Partition, context: TaskContext, region: Region[K, V]): Iterator[(T, V)] = {
+  private def computeWithoutFunc(split: Partition, context: TaskContext,
+      region: Region[K, V]): Iterator[(T, V)] = {
     val leftPairs = left.iterator(split, context).toList.asInstanceOf[List[(K, _)]]
     val leftKeys = leftPairs.map { case (k, v) => k }.toSet
     // Note: get all will return (key, null) for non-exist entry, so remove those entries
@@ -53,16 +56,20 @@ class GemFireJoinRDD[T, K, V] private[connector]
         .map { case (k, v) => ((k, v).asInstanceOf[T], rightPairs.get(k).get) }.toIterator
   }
 
-  private def computeWithFunc(split: Partition, context: TaskContext, region: Region[K, V]): Iterator[(T, V)] = {
+  private def computeWithFunc(split: Partition, context: TaskContext,
+      region: Region[K, V]): Iterator[(T, V)] = {
     val leftPairs = left.iterator(split, context).toList.map(t => (t, func(t)))
     val leftKeys = leftPairs.map { case (t, k) => k }.toSet
     // Note: get all will return (key, null) for non-exist entry, so remove those entries
     val rightPairs = region.getAll(leftKeys).filter { case (k, v) => v != null }
-    leftPairs.filter { case (t, k) => rightPairs.contains(k) }.map { case (t, k) => (t, rightPairs.get(k).get) }.toIterator
+    leftPairs.filter { case (t, k) => rightPairs.contains(k) }.map {
+      case (t, k) => (t, rightPairs.get(k).get) }.toIterator
   }
 
   override protected def getPartitions: Array[Partition] = left.partitions
 
   /** Validate region, and make sure it exists. */
-  private def validate(): Unit = DefaultGemFireConnectionManager.getConnection.validateRegion[K, V](regionPath)
+  // TODO: Asif: Get gridName instead of passing None
+  private def validate(): Unit = DefaultGemFireConnectionManager.
+      getConnection.validateRegion[K, V](regionPath, None)
 }

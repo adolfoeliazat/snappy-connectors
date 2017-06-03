@@ -27,6 +27,7 @@ import io.snappydata.spark.gemfire.connector.internal.rdd.behaviour.{ComputeLogi
 
 import org.apache.spark.rdd.RDD
 import org.apache.spark.sql.Row
+import org.apache.spark.sql.sources.connector.gemfire.Constants
 import org.apache.spark.sql.types.StructType
 import org.apache.spark.{Partition, SparkContext, TaskContext}
 
@@ -43,6 +44,7 @@ class GemFireRegionRDD[K, V, T]
     val computeLogicCreator: GemFireRegionRDD[K, V, T] => ComputeLogic[K, V, T],
     val opConf: Map[String, String] = Map.empty,
     val rowObjectLength: Option[Int],
+    val gridName: Option[String],
     val whereClause: Option[String] = None,
     val oql: Option[String] = None,
     val schema: Option[StructType] = None
@@ -91,8 +93,8 @@ class GemFireRegionRDD[K, V, T]
         |therefore it deserializes to null. RDD transformations are not allowed
         |inside lambdas used in other RDD transformations.""".stripMargin)
 
-    new GemFireRegionRDD[K, V, T](sc, regionPath, computeLogicCreator, opConf, rowObjectLength,
-      whereClause, oql)
+    new GemFireRegionRDD[K, V, T](sc, regionPath, computeLogicCreator, opConf,
+      rowObjectLength, gridName, whereClause, oql)
 
   }
 
@@ -105,7 +107,7 @@ class GemFireRegionRDD[K, V, T]
     val conn = DefaultGemFireConnectionManager.getConnection
     val rgn = regionPath.getOrElse(oql.map(GemFireRegionRDD.getRegionPathFromQuery(_)).
         getOrElse(throw new IllegalStateException("Unknown region")))
-    val md = conn.getRegionMetadata(rgn)
+    val md = conn.getRegionMetadata(rgn, gridName)
     logInfo("servers to buckets obtained = " + md.get.getServerBucketMap)
     md match {
       case None => throw new RuntimeException(s"region $regionPath was not found.")
@@ -145,7 +147,7 @@ class GemFireRegionRDD[K, V, T]
     val rgn = regionPath.getOrElse(oql.map(GemFireRegionRDD.getRegionPathFromQuery(_)).
         getOrElse(throw new IllegalStateException("Unknown region")))
     DefaultGemFireConnectionManager.
-        getConnection.validateRegion[K, V](rgn)
+        getConnection.validateRegion[K, V](rgn, gridName)
   }
 
 
@@ -165,7 +167,7 @@ object GemFireRegionRDD {
       opConf: Map[String, String] = Map.empty): GemFireRegionRDD[K, V, (K, V)] =
     new GemFireRegionRDD[K, V, (K, V)](sc, Some(regionPath),
       (rdd: GemFireRegionRDD[K, V, (K, V)]) => new ExposeRegion[K, V, (K, V)],
-      opConf, None)
+      opConf, None, opConf.get(Constants.gridNameKey))
 
   def getRegionPathFromQuery(queryString: String): String = {
     val r = QueryParser.parseOQL(queryString).get

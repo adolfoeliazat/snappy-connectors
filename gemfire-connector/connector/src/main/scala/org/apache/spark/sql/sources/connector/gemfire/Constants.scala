@@ -12,4 +12,5 @@ object Constants {
   val valueConstraintClass = "valueClass"
   val defaultKeyColumnName = "KeyColumn"
   val defaultValueColumnName = "ValueColumn"
+  val gridNameKey = "gridName"
 }

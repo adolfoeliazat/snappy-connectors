@@ -38,12 +38,11 @@ class GemFireSQLContextFunctions(@transient sqlContext: SQLContext) extends
   def gemfireOQL(query: String): DataFrame = {
     logInfo(s"OQL query = $query")
 
-
      val computeOQLCreator = (rdd: GemFireRegionRDD[Any, Any, Any]) => {
         GemFireRelation.computeForOQL[Any]
     }
     val rdd = new GemFireRegionRDD[Any, Any, Any](sqlContext.sparkContext,
-      None, computeOQLCreator, Map.empty[String, String], None, None,
+      None, computeOQLCreator, Map.empty[String, String], None, None, None,
       Some(query), None)
 
     sqlContext.baseRelationToDataFrame(OQLRelation(rdd)(sqlContext))

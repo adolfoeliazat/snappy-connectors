@@ -30,7 +30,7 @@ case class GemFireRelation(@transient override val sqlContext: SnappyContext,
     val regionPath: String, val primaryKeyColumnName: Option[String],
     val valueColumnName: Option[String], val keyConstraint: Option[String],
     val valueConstraint: Option[String], val providedSchema: Option[StructType],
-    val asSelect: Boolean)
+    val asSelect: Boolean, val gridName: Option[String])
     extends BaseRelation with TableScan with SchemaInsertableRelation
         with PrunedFilteredScan with Logging {
 
@@ -93,7 +93,8 @@ case class GemFireRelation(@transient override val sqlContext: SnappyContext,
   }
 
 
-  val computeForCount = (rdd: GemFireRegionRDD[Any, Any, Row]) => GemFireRelation.computeForCount
+  val computeForCount = (rdd: GemFireRegionRDD[Any, Any, Row]) =>
+    GemFireRelation.computeForCount
 
   override def buildScan(): RDD[Row] = {
     if (this.isDebugEnabled) {
@@ -101,7 +102,7 @@ case class GemFireRelation(@transient override val sqlContext: SnappyContext,
     }
     new GemFireRegionRDD[Any, Any, Row](sqlContext.sparkContext,
       Some(regionPath), computeRegionAsRows, Map.empty[String, String],
-      rowObjectLength, None, None, rowObjectLength.map(_ =>
+      rowObjectLength, gridName, None, None, rowObjectLength.map(_ =>
         this.inferredValueSchema))(keyTag, valueTag, classTag[Row])
   }
 
@@ -265,7 +266,7 @@ case class GemFireRelation(@transient override val sqlContext: SnappyContext,
         logDebug("GemFireRelation: computing for count")
       }
       new GemFireRegionRDD[Any, Any, Row](sqlContext.sparkContext,
-        Some(regionPath), computeForCount, Map.empty[String, String], None, whereClause,
+        Some(regionPath), computeForCount, Map.empty[String, String], None, gridName, whereClause,
         None)(keyTag, valueTag, classTag[Row])
     } else if (requiredColumns.size == this.schema.size && filters.isEmpty &&
         !requiredColumns.zip(schema).exists(tup => !tup._1.equalsIgnoreCase(tup._2.name))) {
@@ -280,8 +281,8 @@ case class GemFireRelation(@transient override val sqlContext: SnappyContext,
       }
 
       new GemFireRegionRDD[Any, Any, Row](sqlContext.sparkContext,
-        Some(regionPath), computeOQLAsRows, Map.empty[String, String], rowObjectLength, None,
-        Some(oql), schemaOpt)(keyTag, valueTag, classTag[Row])
+        Some(regionPath), computeOQLAsRows, Map.empty[String, String], rowObjectLength,
+        gridName, None, Some(oql), schemaOpt)(keyTag, valueTag, classTag[Row])
     }
 
   }
@@ -296,7 +297,9 @@ case class GemFireRelation(@transient override val sqlContext: SnappyContext,
   override def insert(data: DataFrame, overwrite: Boolean): Unit = {
     val pkIndex = this.schema.indexWhere(sf => sf.name.equalsIgnoreCase(
       this.primaryKeyColumnName.get))
-   new GemFireDataFrameFunctions(data).saveToGemFire[Any](regionPath, row => row(pkIndex))
+   new GemFireDataFrameFunctions(data).saveToGemFire[Any](regionPath, row => row(pkIndex),
+     gridName.map(x => Map[String, String](Constants.gridNameKey -> x)).
+         getOrElse(Map.empty[String, String]))
   }
 
   private def convertDataTypeToStructFields(dataType: DataType, nullable: Boolean,
@@ -605,7 +608,8 @@ private def inferDataType(c: Class[_]): Option[DataType] = {
 
 
   def computeForRegionAsRows[K: ClassTag, V: ClassTag](keyConstraint: Option[String],
-      valueConstraint: Option[String], rowObjectLength: Option[Int]): ComputeLogic[K, V, Row] = {
+      valueConstraint: Option[String], rowObjectLength: Option[Int]):
+  ComputeLogic[K, V, Row] = {
 
     new ComputeLogic[K, V, Row]() {
       override def apply(rdd: GemFireRegionRDD[K, V, Row],
@@ -616,7 +620,7 @@ private def inferDataType(c: Class[_]): Option[DataType] = {
             getLengthAndConverters(keyClass, valueClass, rowObjectLength)
         val iter = DefaultGemFireConnectionManager.getConnection.
             getRegionData[Any, Any](rdd.regionPath.get, rdd.whereClause, partition,
-          keyLength, rdd.schema)
+          keyLength, rdd.schema, rdd.gridName)
         val hasNestedGemFireRow = rdd.schema.map(_.exists(sf => sf.dataType match {
           case _: StructType => true
           case _ => false
@@ -664,7 +668,7 @@ private def inferDataType(c: Class[_]): Option[DataType] = {
           GemFireRegionRDD.getRegionPathFromQuery(_)).
             getOrElse(throw new IllegalStateException("Unknown region")))
         val iter = DefaultGemFireConnectionManager.getConnection.
-            executeQuery(region, buckets, rdd.oql.get, rdd.schema ).
+            executeQuery(region, buckets, rdd.oql.get, rdd.schema, rdd.gridName ).
             asInstanceOf[Iterator[Any]]
         val hasNestedGemFireRow = rdd.schema.map(_.exists(sf => sf.dataType match {
           case _: StructType => true
@@ -703,7 +707,7 @@ private def inferDataType(c: Class[_]): Option[DataType] = {
           partition: GemFireRDDPartition, taskContext: TaskContext): Iterator[Row] = {
         val buckets = partition.bucketSet
         val rgnSize = DefaultGemFireConnectionManager.getConnection.
-            getCount(rdd.regionPath.get, buckets, rdd.whereClause)
+            getCount(rdd.regionPath.get, buckets, rdd.whereClause, rdd.gridName)
         new Iterator[Row]() {
           var current = 0
           val fixed = Row(1)
@@ -747,7 +751,7 @@ final class DefaultSource
           "need to be provided for the table definition")
     }
     val relation = GemFireRelation(snc, regionPath, pkColumnName, valueColumnName,
-      kc, vc, schemaOpt, asSelect)
+      kc, vc, schemaOpt, asSelect, options.get(Constants.gridNameKey))
 
     val catalog = sqlContext.sparkSession.asInstanceOf[SnappySession].sessionCatalog
     if (this.isDebugEnabled) {

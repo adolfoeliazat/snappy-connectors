@@ -22,6 +22,7 @@ import io.snappydata.spark.gemfire.connector.internal.DefaultGemFireConnectionMa
 import org.apache.spark.Logging
 import org.apache.spark.api.java.function.{Function, PairFunction}
 import org.apache.spark.rdd.RDD
+import org.apache.spark.sql.sources.connector.gemfire.Constants
 
 /**
   * Extra gemFire functions on non-Pair RDDs through an implicit conversion.
@@ -51,7 +52,7 @@ class GemFireRDDFunctions[T](val rdd: RDD[T]) extends Serializable with Logging 
 
       opConf: Map[String, String] = Map.empty): Unit = {
     val geodeConn = DefaultGemFireConnectionManager.getConnection
-    geodeConn.validateRegion[K, V](regionPath)
+    geodeConn.validateRegion[K, V](regionPath, opConf.get(Constants.gridNameKey))
     if (log.isDebugEnabled)
       logDebug(s"""Save RDD id=${rdd.id} to region $regionPath, partitions:\n  ${getRddPartitionsInfo(rdd)}""")
     else

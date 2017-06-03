@@ -24,6 +24,7 @@ import com.gemstone.gemfire.cache.Region
 import io.snappydata.spark.gemfire.connector._
 import io.snappydata.spark.gemfire.connector.internal.DefaultGemFireConnectionManager
 
+import org.apache.spark.sql.sources.connector.gemfire.Constants
 import org.apache.spark.{Logging, TaskContext}
 
 /** This trait provide some common code for pair and non-pair RDD writer */
@@ -53,11 +54,14 @@ class GemFireRDDWriter[T, K, V]
     extends GemFireRDDWriterBase(opConf) with Serializable with Logging {
 
   def write(func: T => (K, V))(taskContext: TaskContext, data: Iterator[T]): Unit = {
-    val region: Region[K, V] = DefaultGemFireConnectionManager.getConnection.getRegionProxy[K, V](regionPath)
+    val region: Region[K, V] = DefaultGemFireConnectionManager.getConnection.
+        getRegionProxy[K, V](regionPath, opConf.get(Constants.gridNameKey))
     var count = 0
     val chunks = data.grouped(batchSize)
     chunks.foreach { chunk =>
-      val map = chunk.foldLeft(new JMap[K, V]()) { case (m, t) => val (k, v) = func(t); m.put(k, v); m }
+      val map = chunk.foldLeft(new JMap[K, V]()) {
+        case (m, t) => val (k, v) = func(t); m.put(k, v); m
+      }
       region.putAll(map)
       count += chunk.length
     }
@@ -77,7 +81,8 @@ class GemFirePairRDDWriter[K, V]
     extends GemFireRDDWriterBase(opConf) with Serializable with Logging {
 
   def write(taskContext: TaskContext, data: Iterator[(K, V)]): Unit = {
-    val region: Region[K, V] = DefaultGemFireConnectionManager.getConnection.getRegionProxy[K, V](regionPath)
+    val region: Region[K, V] = DefaultGemFireConnectionManager.getConnection.
+        getRegionProxy[K, V](regionPath, opConf.get(Constants.gridNameKey))
     var count = 0
     val chunks = data.grouped(batchSize)
     chunks.foreach { chunk =>

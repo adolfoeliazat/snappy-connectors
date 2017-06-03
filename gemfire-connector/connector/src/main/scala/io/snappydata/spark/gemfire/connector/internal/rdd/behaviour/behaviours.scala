@@ -24,17 +24,20 @@ import io.snappydata.spark.gemfire.connector.internal.rdd.{GemFireRDDPartition, 
 
 import org.apache.spark.sql.catalyst.expressions.GenericRow
 import org.apache.spark.TaskContext
+import org.apache.spark.sql.sources.connector.gemfire.Constants
 
 
 
 class ExposeRegion[K: ClassTag, V: ClassTag, T: ClassTag] extends ComputeLogic[K, V, T]{
+
   override def apply(rdd: GemFireRegionRDD[K, V, T], partition: GemFireRDDPartition,
       taskContext: TaskContext): Iterator[T] = {
     // logDebug(s"compute RDD id=${this.id} partition $partition")
 
+
     val iter = DefaultGemFireConnectionManager.getConnection.
-        getRegionData[Any, Any](rdd.regionPath.get, rdd.whereClause, partition, 1, None).
-        asInstanceOf[Iterator[(Any, Any)]]
+        getRegionData[Any, Any](rdd.regionPath.get, rdd.whereClause, partition, 1,
+      None, rdd.gridName).asInstanceOf[Iterator[(Any, Any)]]
     if (rdd.isRowObject) {
       iter.map{
         case (k, v) => (k, ExposeRegion.valueExtractor(

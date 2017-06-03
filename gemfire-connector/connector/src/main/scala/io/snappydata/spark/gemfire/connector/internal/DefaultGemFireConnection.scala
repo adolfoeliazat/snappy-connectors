@@ -73,16 +73,17 @@ private[connector] class DefaultGemFireConnection(locators: Array[String])
   /** ----------------------------------------- */
 
   override def getQuery(queryString: String): Query =
-  clientCache.asInstanceOf[GemFireSparkConnectorCacheImpl].getRemoteGemFireQueryService.newQuery(queryString)
+  clientCache.asInstanceOf[GemFireSparkConnectorCacheImpl].getRemoteGemFireQueryService.
+      newQuery(queryString)
 
-  override def validateRegion[K, V](regionPath: String): Unit = {
-    val md = getRegionMetadata[K, V](regionPath)
+  override def validateRegion[K, V](regionPath: String, gridName: Option[String]): Unit = {
+    val md = getRegionMetadata[K, V](regionPath, gridName)
     if (!md.isDefined) throw new RuntimeException(s"The region named $regionPath was not found")
   }
 
   override def getCount(regionPath: String, buckets: Set[Int],
-      whereClause: Option[String]): Long = {
-    val region = getRegionProxy(regionPath)
+      whereClause: Option[String], gridName: Option[String]): Long = {
+    val region = getRegionProxy(regionPath, gridName)
     val args: Array[String] = Array[String](whereClause.getOrElse(""))
     val rc = new CountResultCollector()
     import scala.collection.JavaConverters._
@@ -93,9 +94,10 @@ private[connector] class DefaultGemFireConnection(locators: Array[String])
 
   }
 
-  def getRegionMetadata[K, V](regionPath: String): Option[RegionMetadata] = {
+  def getRegionMetadata[K, V](regionPath: String, gridName: Option[String])
+  : Option[RegionMetadata] = {
     import scala.collection.JavaConverters._
-    val region = getRegionProxy[K, V](regionPath)
+    val region = getRegionProxy[K, V](regionPath, gridName)
     val set0: JSet[Integer] = Set[Integer](0).asJava
     val exec = FunctionService.onRegion(region).asInstanceOf[InternalExecution].withFilter(set0)
     // exec.setWaitOnExceptionFlag(true)
@@ -112,8 +114,9 @@ private[connector] class DefaultGemFireConnection(locators: Array[String])
   }
 
   override def getRegionData[K, V](regionPath: String, whereClause: Option[String],
-      split: GemFireRDDPartition, keyLength: Int, schemaOpt: Option[StructType]): Iterator[_] = {
-    val region = getRegionProxy[K, V](regionPath)
+      split: GemFireRDDPartition, keyLength: Int, schemaOpt: Option[StructType],
+      gridName: Option[String]): Iterator[_] = {
+    val region = getRegionProxy[K, V](regionPath, gridName)
     val desc = s"""RDD($regionPath, "${whereClause.getOrElse("")}", ${split.index})"""
     val args: Array[String] = Array[String](whereClause.getOrElse(""), desc, keyLength.toString,
       schemaOpt.map(_ => "true").getOrElse("false"))
@@ -148,25 +151,70 @@ private[connector] class DefaultGemFireConnection(locators: Array[String])
 
   }
 
-  def getRegionProxy[K, V](regionPath: String): Region[K, V] = {
+  private def checkGridNameMatchForRegion(region: Region[_, _], gridName: Option[String]): Unit = {
+    val associatedPool = region.getAttributes.getPoolName
+    val defaultPoolName = if (clientCache.getDefaultPool != null) {
+      clientCache.getDefaultPool.getName
+    }
+    else null
+    if (gridName.isDefined) {
+      if (gridName.get != associatedPool) {
+        val assosciatedGridName = if (associatedPool == defaultPoolName) "default"
+        else associatedPool
+
+        val exceptionString = s"Region ${region.getName} is already associated with grid " +
+            s"${assosciatedGridName} and does not match the " +
+            s"grid parameter ${gridName.get}"
+
+        throw new IllegalStateException(exceptionString)
+      }
+    } else if (associatedPool != defaultPoolName) {
+      val exceptionString = s"Region ${region.getName} is already associated with grid " +
+          s"${associatedPool} and does not match the grid parameter default"
+      throw new IllegalStateException(exceptionString)
+    }
+  }
+  override def getRegionProxy[K, V](regionPath: String, gridName: Option[String]): Region[K, V] = {
     val region1: Region[K, V] = clientCache.getRegion(regionPath).asInstanceOf[Region[K, V]]
-    if (region1 != null) region1
+    if (region1 != null) {
+      // check if pool name aasociated with region matches gridName
+      checkGridNameMatchForRegion(region1, gridName)
+      region1
+    }
     else DefaultGemFireConnection.regionLock.synchronized {
       val region2 = clientCache.getRegion(regionPath).asInstanceOf[Region[K, V]]
-      if (region2 != null) region2
-      else clientCache.createClientRegionFactory[K, V](ClientRegionShortcut.PROXY).create(regionPath)
+      if (region2 != null) {
+        // check if pool name aasociated with region matches gridName
+        checkGridNameMatchForRegion(region2, gridName)
+        region2
+      }
+      else {
+        val poolName = gridName.getOrElse({
+          val defaultPool = clientCache.getDefaultPool
+          if (defaultPool != null) {
+            defaultPool.getName
+          } else {
+            throw new IllegalStateException("No default grid is specified in " +
+                "the system and no explicit grid provided")
+          }
+        })
+
+        val factory = clientCache.createClientRegionFactory[K, V](ClientRegionShortcut.PROXY)
+        factory.setPoolName(poolName)
+        factory.create(regionPath)
+      }
     }
   }
 
   override def executeQuery(regionPath: String, bucketSet: Set[Int],
-      queryString: String, schema: Option[StructType]):
+      queryString: String, schema: Option[StructType], gridName: Option[String]):
   AnyRef = {
     import scala.collection.JavaConverters._
     FunctionService.registerFunction(new DummyFunction {
       override def getId: String = ConnectorFunctionIDs.QueryFunction_ID
     })
     val collector = new QueryResultCollector(schema)
-    val region = getRegionProxy(regionPath)
+    val region = getRegionProxy(regionPath, gridName)
     val schemaMapping = schema.map(GemFireRowHelper.getSchemaCode(_).mkString(",")).getOrElse("")
     val args: Array[String] = Array[String](queryString, bucketSet.toString,
       schemaMapping)

@@ -30,14 +30,14 @@ trait GemFireConnection {
     *
     * @param regionPath the full path of region
     */
-  def validateRegion[K, V](regionPath: String): Unit
+  def validateRegion[K, V](regionPath: String, gridName: Option[String]): Unit
 
   /**
     * Get Region proxy for the given region
     *
     * @param regionPath the full path of region
     */
-  def getRegionProxy[K, V](regionPath: String): Region[K, V]
+  def getRegionProxy[K, V](regionPath: String, gridName: Option[String]): Region[K, V]
 
   /**
     * Retrieve region meta data for the given region.
@@ -45,7 +45,7 @@ trait GemFireConnection {
     * @param regionPath : the full path of the region
     * @return Some[RegionMetadata] if region exists, None otherwise
     */
-  def getRegionMetadata[K, V](regionPath: String): Option[RegionMetadata]
+  def getRegionMetadata[K, V](regionPath: String, gridName: Option[String]): Option[RegionMetadata]
 
   /**
     * Retrieve region data for the given region and bucket set
@@ -56,10 +56,10 @@ trait GemFireConnection {
     */
   def getRegionData[K, V](regionPath: String, whereClause: Option[String],
       split: GemFireRDDPartition, keyLength: Int,
-      schemaOpt: Option[StructType]): Iterator[_]
+      schemaOpt: Option[StructType], gridName: Option[String]): Iterator[_]
 
   def executeQuery(regionPath: String, bucketSet: Set[Int],
-      queryString: String, schemaOpt: Option[StructType]): Object
+      queryString: String, schemaOpt: Option[StructType], gridName: Option[String]): Object
 
   /**
     * Create a gemfire OQL query
@@ -68,7 +68,8 @@ trait GemFireConnection {
     */
   def getQuery(queryString: String): Query
 
-  def getCount(regionPath: String, buckets: Set[Int], whereClause: Option[String]): Long
+  def getCount(regionPath: String, buckets: Set[Int],
+      whereClause: Option[String], gridName: Option[String]): Long
 
   /** Close the connection */
   def close(): Unit

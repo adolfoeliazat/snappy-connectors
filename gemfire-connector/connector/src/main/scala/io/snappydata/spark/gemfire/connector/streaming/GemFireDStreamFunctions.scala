@@ -21,6 +21,7 @@ import io.snappydata.spark.gemfire.connector.internal.DefaultGemFireConnectionMa
 
 import org.apache.spark.Logging
 import org.apache.spark.api.java.function.PairFunction
+import org.apache.spark.sql.sources.connector.gemfire.Constants
 import org.apache.spark.streaming.dstream.DStream
 
 /**
@@ -49,9 +50,11 @@ class GemFireDStreamFunctions[T](val dstream: DStream[T]) extends Serializable w
       regionPath: String,
       func: T => (K, V),
       opConf: Map[String, String] = Map.empty): Unit = {
-    DefaultGemFireConnectionManager.getConnection.validateRegion[K, V](regionPath)
+    DefaultGemFireConnectionManager.getConnection.validateRegion[K, V](regionPath,
+      opConf.get(Constants.gridNameKey))
     val writer = new GemFireRDDWriter[T, K, V](regionPath, opConf)
-    logInfo(s"""Save DStream region=$regionPath conn=${DefaultGemFireConnectionManager.locators.mkString(",")}""")
+    logInfo(s"""Save DStream region=$regionPath conn=${DefaultGemFireConnectionManager.locators.
+        mkString(",")}""")
     dstream.foreachRDD(rdd => rdd.sparkContext.runJob(rdd, writer.write(func) _))
   }
 
@@ -64,7 +67,8 @@ class GemFireDStreamFunctions[T](val dstream: DStream[T]) extends Serializable w
   * Import `org.apache.geode.spark.connector.streaming._` at the top of your program to
   * use these functions.
   */
-class GemFirePairDStreamFunctions[K, V](val dstream: DStream[(K, V)]) extends Serializable with Logging {
+class GemFirePairDStreamFunctions[K, V](val dstream: DStream[(K, V)]) extends
+    Serializable with Logging {
 
   /**
     * Save the DStream of pairs to Geode key-value store without any conversion
@@ -75,9 +79,11 @@ class GemFirePairDStreamFunctions[K, V](val dstream: DStream[(K, V)]) extends Se
   def saveToGemFire(
       regionPath: String,
       opConf: Map[String, String] = Map.empty): Unit = {
-    DefaultGemFireConnectionManager.getConnection.validateRegion[K, V](regionPath)
+    DefaultGemFireConnectionManager.getConnection.validateRegion[K, V](regionPath,
+      opConf.get(Constants.gridNameKey))
     val writer = new GemFirePairRDDWriter[K, V](regionPath, opConf)
-    logInfo(s"""Save DStream region=$regionPath conn=${DefaultGemFireConnectionManager.locators.mkString(",")}""")
+    logInfo(s"""Save DStream region=$regionPath conn=${DefaultGemFireConnectionManager.
+        locators.mkString(",")}""")
     dstream.foreachRDD(rdd => rdd.sparkContext.runJob(rdd, writer.write _))
   }
 

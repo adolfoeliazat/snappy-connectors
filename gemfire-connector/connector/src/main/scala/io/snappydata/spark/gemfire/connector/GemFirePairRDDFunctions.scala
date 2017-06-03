@@ -24,7 +24,7 @@ import org.apache.spark.Logging
 import org.apache.spark.api.java.function.Function
 import org.apache.spark.rdd.RDD
 import org.apache.spark.sql.collection.Utils
-import org.apache.spark.sql.sources.connector.gemfire.GemFireRowHelper
+import org.apache.spark.sql.sources.connector.gemfire.{Constants, GemFireRowHelper}
 import org.apache.spark.sql.types.StructType
 import org.apache.spark.sql.{DataFrame, Row}
 
@@ -44,7 +44,8 @@ class GemFirePairRDDFunctions[K, V](val rdd: RDD[(K, V)]) extends Serializable w
   def saveToGemFire(
       regionPath: String,
       opConf: Map[String, String] = Map.empty): Unit = {
-    DefaultGemFireConnectionManager.getConnection.validateRegion[K, V](regionPath)
+    DefaultGemFireConnectionManager.getConnection.validateRegion[K, V](regionPath,
+      opConf.get(Constants.gridNameKey))
     if (log.isDebugEnabled)
       logDebug(
         s"""Save RDD id=${rdd.id} to region $regionPath,
@@ -153,7 +154,8 @@ class GemFireDataFrameFunctions(val df: DataFrame) extends Serializable with Log
       regionPath: String,
       keyExtractor: Row => K,
       opConf: Map[String, String] = Map.empty): Unit = {
-    DefaultGemFireConnectionManager.getConnection.validateRegion[K, Row](regionPath)
+    DefaultGemFireConnectionManager.getConnection.validateRegion[K, Row](regionPath,
+      opConf.get(Constants.gridNameKey))
     /*
     if(df.schema.exists(f => {
       f.dataType match {
