@@ -16,6 +16,7 @@
  */
 package io.snappydata.spark.gemfire.connector
 
+import scala.annotation.meta.param
 import scala.reflect.ClassTag
 
 import io.snappydata.spark.gemfire.connector.internal.rdd.GemFireRegionRDD
@@ -23,8 +24,8 @@ import io.snappydata.spark.gemfire.connector.internal.rdd.GemFireRegionRDD
 import org.apache.spark.SparkContext
 import org.apache.spark.rdd.RDD
 
-/** Provides Geode specific methods on `SparkContext` */
-class GemFireSparkContextFunctions(@transient sc: SparkContext) extends Serializable {
+/** Provides GemFire specific methods on `SparkContext` */
+class GemFireSparkContextFunctions(@(transient @param) sc: SparkContext) extends Serializable {
 
   /**
     * Expose a Geode region as a GeodeRDD

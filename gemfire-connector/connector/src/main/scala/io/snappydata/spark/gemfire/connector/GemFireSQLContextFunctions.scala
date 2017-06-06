@@ -17,6 +17,8 @@
 package io.snappydata.spark.gemfire.connector
 
 
+import scala.annotation.meta.param
+
 import io.snappydata.spark.gemfire.connector.internal.oql.OQLRelation
 import io.snappydata.spark.gemfire.connector.internal.rdd.GemFireRegionRDD
 
@@ -27,7 +29,7 @@ import org.apache.spark.sql.{DataFrame, SQLContext}
 /**
   * Provide Geode OQL specific functions
   */
-class GemFireSQLContextFunctions(@transient sqlContext: SQLContext) extends
+class GemFireSQLContextFunctions(@(transient @param) sqlContext: SQLContext) extends
     Serializable with Logging {
 
   /**
