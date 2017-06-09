@@ -46,7 +46,7 @@ object ServerSplitsPartitioner extends GemFireRDDPartitioner {
   override val name = "ServerSplits"
 
   override def partitions(conn: GemFireConnection, md: RegionMetadata,
-      env: Map[String, String]): Array[Partition] = {
+      opConf: Map[String, String]): Array[Partition] = {
     if (md == null) throw new RuntimeException("RegionMetadata is null")
 
 
@@ -57,14 +57,14 @@ object ServerSplitsPartitioner extends GemFireRDDPartitioner {
       val map = mapAsScalaMap(md.getServerBucketMap)
           .map { case (srv, set) => (srv, asScalaSet(set).map(_.toInt)) }.toList
           .map { case (srv, set) => (srv, set) }
-      doPartitions(map, md.getTotalBuckets, env.getOrElse(MaxBucketsPerPartitionKey,
+      doPartitions(map, md.getTotalBuckets, opConf.getOrElse(MaxBucketsPerPartitionKey,
         MaxBucketsPerPartitionDefault.toString).toInt)
     }
   }
 
   /** Converts server to bucket ID set list to array of RDD partitions */
   def doPartitions(serverBucketMap: List[(String, mutable.Set[Int])],
-      totalBuckets: Int,  maxBucketsPerPartition: Int)
+      totalBuckets: Int, maxBucketsPerPartition: Int)
   : Array[Partition] = {
 
     // method that calculates the group size for splitting "k" items into "g" groups
@@ -80,7 +80,7 @@ object ServerSplitsPartitioner extends GemFireRDDPartitioner {
     // 2. split bucket set of each server into n splits if possible, and server to Seq(server)
     val srvToSplitedBuckeSet = srvToSortedBucketSet.flatMap { case (host, set) =>
       if (set.isEmpty) Nil else set.grouped(groupSize(set.size,
-        totalPartitions)).toList.map(s => (Seq(host), s))
+        ((set.size.toFloat/totalBuckets) * totalPartitions).toInt )).toList.map(s => (Seq(host), s))
     }
 
 

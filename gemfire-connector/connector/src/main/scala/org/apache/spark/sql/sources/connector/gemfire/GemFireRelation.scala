@@ -30,7 +30,7 @@ case class GemFireRelation(@transient override val sqlContext: SnappyContext,
     val regionPath: String, val primaryKeyColumnName: Option[String],
     val valueColumnName: Option[String], val keyConstraint: Option[String],
     val valueConstraint: Option[String], val providedSchema: Option[StructType],
-    val asSelect: Boolean, val gridName: Option[String])
+    val asSelect: Boolean, val gridName: Option[String], val opConf: Map[String, String])
     extends BaseRelation with TableScan with SchemaInsertableRelation
         with PrunedFilteredScan with Logging {
 
@@ -101,7 +101,7 @@ case class GemFireRelation(@transient override val sqlContext: SnappyContext,
       logDebug("GemFireRelation: computing for empty build scan")
     }
     new GemFireRegionRDD[Any, Any, Row](sqlContext.sparkContext,
-      Some(regionPath), computeRegionAsRows, Map.empty[String, String],
+      Some(regionPath), computeRegionAsRows, opConf,
       rowObjectLength, gridName, None, None, rowObjectLength.map(_ =>
         this.inferredValueSchema))(keyTag, valueTag, classTag[Row])
   }
@@ -266,7 +266,7 @@ case class GemFireRelation(@transient override val sqlContext: SnappyContext,
         logDebug("GemFireRelation: computing for count")
       }
       new GemFireRegionRDD[Any, Any, Row](sqlContext.sparkContext,
-        Some(regionPath), computeForCount, Map.empty[String, String], None, gridName, whereClause,
+        Some(regionPath), computeForCount, opConf, None, gridName, whereClause,
         None)(keyTag, valueTag, classTag[Row])
     } else if (requiredColumns.size == this.schema.size && filters.isEmpty &&
         !requiredColumns.zip(schema).exists(tup => !tup._1.equalsIgnoreCase(tup._2.name))) {
@@ -281,7 +281,7 @@ case class GemFireRelation(@transient override val sqlContext: SnappyContext,
       }
 
       new GemFireRegionRDD[Any, Any, Row](sqlContext.sparkContext,
-        Some(regionPath), computeOQLAsRows, Map.empty[String, String], rowObjectLength,
+        Some(regionPath), computeOQLAsRows, opConf, rowObjectLength,
         gridName, None, Some(oql), schemaOpt)(keyTag, valueTag, classTag[Row])
     }
 
@@ -739,19 +739,23 @@ final class DefaultSource
     val params = new CaseInsensitiveMutableHashMap(options)
 
     val snc = sqlContext.asInstanceOf[SnappyContext]
-    val tableName = options.get(JdbcExtendedUtils.DBTABLE_PROPERTY)
-    val regionPath = params.getOrElse(Constants.REGION_PATH, throw OtherUtils.analysisException(
+    val tableName = params.remove(JdbcExtendedUtils.DBTABLE_PROPERTY)
+    val regionPathOption = params.remove(Constants.REGION_PATH)
+    val regionPath = regionPathOption.getOrElse( throw OtherUtils.analysisException(
       "GemFire Region Path is missing"))
-    val pkColumnName = params.get(Constants.PRIMARY_KEY_COLUMN_NAME)
-    val valueColumnName = params.get(Constants.VALUE_COLUMN_NAME)
-    val kc = params.get(Constants.keyConstraintClass)
-    val vc = params.get(Constants.valueConstraintClass)
+
+    val pkColumnName = params.remove(Constants.PRIMARY_KEY_COLUMN_NAME)
+    val valueColumnName = params.remove(Constants.VALUE_COLUMN_NAME)
+    val kc = params.remove(Constants.keyConstraintClass)
+    val vc = params.remove(Constants.valueConstraintClass)
     if (kc.isEmpty && vc.isEmpty) {
       throw OtherUtils.analysisException("Either Key Class  or value class  " +
           "need to be provided for the table definition")
     }
+    val gridOption = params.remove(Constants.gridNameKey)
+
     val relation = GemFireRelation(snc, regionPath, pkColumnName, valueColumnName,
-      kc, vc, schemaOpt, asSelect, options.get(Constants.gridNameKey))
+      kc, vc, schemaOpt, asSelect, gridOption, params.toMap)
 
     val catalog = sqlContext.sparkSession.asInstanceOf[SnappySession].sessionCatalog
     if (this.isDebugEnabled) {

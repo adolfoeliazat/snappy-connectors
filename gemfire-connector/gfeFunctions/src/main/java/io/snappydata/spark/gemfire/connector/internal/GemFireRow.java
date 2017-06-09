@@ -17,42 +17,49 @@
 package io.snappydata.spark.gemfire.connector.internal;
 
 
-import java.io.*;
+import java.io.ByteArrayInputStream;
+import java.io.DataInput;
+import java.io.DataInputStream;
+import java.io.DataOutput;
+import java.io.IOException;
+import java.lang.ref.WeakReference;
 import java.sql.Date;
 import java.sql.Timestamp;
 import java.util.BitSet;
 
-
 import com.gemstone.gemfire.DataSerializable;
 import com.gemstone.gemfire.DataSerializer;
-import com.gemstone.gemfire.internal.cache.GemFireCacheImpl;
 import io.snappydata.spark.gemfire.connector.internal.gemfirefunctions.shared.NonVersionedHeapDataOutputStream;
 import io.snappydata.spark.gemfire.connector.internal.gemfirefunctions.shared.SchemaMappings;
 
 public class GemFireRow implements DataSerializable {
 
   private volatile byte[] schemaCode = null;
-  private volatile Object[] deser = null;
-  //private volatile byte[] ser = null;
+  private volatile WeakReference<Object[]> weakDeser = null;
+  private volatile byte[] serData = null;
   private static int ADDRESS_BITS_PER_WORD = 6;
   public static long serialVersionUID = 1362354784026L;
 
   public GemFireRow() {
   }
 
-  public GemFireRow(byte[] schemaCode, Object[] deser) {
+  public static GemFireRow create(byte[] schemaCode, Object[] deser) throws IOException {
+    NonVersionedHeapDataOutputStream hdos = new NonVersionedHeapDataOutputStream();
+    writeData(hdos, schemaCode, deser);
+    return new GemFireRow(schemaCode, hdos.toByteArray());
+  }
+
+  private GemFireRow(byte[] schemaCode, byte[] ser) {
     this.schemaCode = schemaCode;
-    this.deser = deser;
+    this.serData = ser;
   }
 
   @Override
   public void toData(DataOutput dataOutput) throws IOException {
+    DataSerializer.writePrimitiveInt(serData.length, dataOutput);
+    this.writeSchema(dataOutput);
+    dataOutput.write(serData);
     /*
-    if (ser != null) {
-      DataSerializer.writePrimitiveInt(ser.length, dataOutput);
-      this.writeSchema(dataOutput);
-      dataOutput.write(ser);
-    } else {
       NonVersionedHeapDataOutputStream hdos = new NonVersionedHeapDataOutputStream();
       this.writeSchema(hdos);
       int initialSize = hdos.size();
@@ -61,23 +68,25 @@ public class GemFireRow implements DataSerializable {
       int serDataSize = endSize - initialSize ;
       DataSerializer.writePrimitiveInt(serDataSize, dataOutput);
       hdos.sendTo(dataOutput);
-     }
-     */
+*/
+    /*
     NonVersionedHeapDataOutputStream hdos = new NonVersionedHeapDataOutputStream();
     this.writeSchema(hdos);
     this.writeData(hdos);
     hdos.sendTo(dataOutput);
+    */
   }
 
 
   public void toDataWithoutTopSchema(NonVersionedHeapDataOutputStream hdos) throws IOException {
+    hdos.write(this.serData);
     /*
     if (ser != null) {
       hdos.write(ser);
     } else {
     */
-      this.writeData(hdos);
-     // this.ser = hdos.toByteArray();
+    //this.writeData(hdos);
+    // this.ser = hdos.toByteArray();
     //}
   }
 
@@ -85,7 +94,8 @@ public class GemFireRow implements DataSerializable {
     DataSerializer.writeByteArray(schemaCode, hdos);
   }
 
-  private void writeData(NonVersionedHeapDataOutputStream hdos) throws IOException {
+  private static void writeData(NonVersionedHeapDataOutputStream hdos, byte[] schemaCode, Object[] deser)
+      throws IOException {
     int numLongs = getNumLongsForBitSet(schemaCode.length);
     NonVersionedHeapDataOutputStream.LongUpdater[] longUpdaters =
         new NonVersionedHeapDataOutputStream.LongUpdater[numLongs];
@@ -165,26 +175,37 @@ public class GemFireRow implements DataSerializable {
 
   @Override
   public void fromData(DataInput dataInput) throws IOException, ClassNotFoundException {
-   // int dataLength = DataSerializer.readPrimitiveInt(dataInput);
+    int dataLength = DataSerializer.readPrimitiveInt(dataInput);
     schemaCode = DataSerializer.readByteArray(dataInput);
-    //ser = new byte[dataLength];
-    //dataInput.readFully(ser);
-    this.deser = this.readArrayData(dataInput);
+    this.serData = new byte[dataLength];
+    dataInput.readFully(serData);
+    //this.deser = this.readArrayData(dataInput);
   }
 
   public Object[] getArray() throws IOException, ClassNotFoundException {
-    /*
-    if (deser == null) {
-      DataInputStream dis = new DataInputStream(new ByteArrayInputStream(this.ser));
-      this.deser = this.readArrayData(dis);
+    if (weakDeser != null) {
+      Object[] deser = weakDeser.get();
+      if (deser != null) {
+        return deser;
+      } else {
+        return getAndSetDeser();
+      }
+    } else {
+      return getAndSetDeser();
     }
-    */
+
+  }
+
+  private Object[] getAndSetDeser() throws IOException, ClassNotFoundException {
+    DataInputStream dis = new DataInputStream(new ByteArrayInputStream(this.serData));
+    Object[] deser = this.readArrayData(dis);
+    this.weakDeser = new WeakReference<Object[]>(deser);
     return deser;
   }
 
   public Object get(int pos) throws IOException, ClassNotFoundException {
-    // return getArray()[pos];
-    return this.deser[pos];
+    return getArray()[pos];
+
   }
 
   public Object[] readArrayData(DataInput dis) throws IOException, ClassNotFoundException {
@@ -256,7 +277,7 @@ public class GemFireRow implements DataSerializable {
   }
 
   public static int getNumLongsForBitSet(int nbits) {
-    return wordIndex(nbits-1) + 1;
+    return wordIndex(nbits - 1) + 1;
   }
 
   private static int wordIndex(int bitIndex) {

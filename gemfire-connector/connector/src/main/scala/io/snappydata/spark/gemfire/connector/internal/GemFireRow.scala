@@ -16,7 +16,7 @@
  */
 package io.snappydata.spark.gemfire.connector.internal
 
-import java.io.{ByteArrayInputStream, DataInput, DataInputStream, DataOutput, IOException}
+import java.io.{DataInput, DataOutput, IOException}
 import java.sql.{Date, Timestamp}
 
 import scala.collection.mutable.BitSet
@@ -26,52 +26,34 @@ import io.snappydata.spark.gemfire.connector.internal.gemfirefunctions.shared.{N
 
 @SerialVersionUID(1362354784026L)
 class GemFireRow(var schemaCode: Array[Byte],
-    var deser: Array[Any]) extends DataSerializable{
+    var deser: Array[Any]) extends DataSerializable {
 
 
-  def this(){
+  def this() {
     this(null, null)
   }
 
 
   @throws[IOException]
   def toData(dataOutput: DataOutput) {
-   /*
-    if (ser != null) {
-      DataSerializer.writePrimitiveInt(ser.length, dataOutput)
-      this.writeSchema(dataOutput)
-      dataOutput.write(ser)
-    }
-    else {
-      val hdos: NonVersionedHeapDataOutputStream = new NonVersionedHeapDataOutputStream
-      this.writeSchema(hdos)
-      val initialSize: Int = hdos.size
-      this.writeData(hdos)
-      val endSize: Int = hdos.size
-      val serDataSize: Int = endSize - initialSize
-      DataSerializer.writePrimitiveInt(serDataSize, dataOutput)
-      hdos.sendTo(dataOutput)
-    }
-    */
-   val hdos: NonVersionedHeapDataOutputStream = new NonVersionedHeapDataOutputStream
+    val hdos: NonVersionedHeapDataOutputStream = new NonVersionedHeapDataOutputStream
     this.writeSchema(hdos)
+    val initialSize: Int = hdos.size
     this.writeData(hdos)
+    val endSize: Int = hdos.size
+    val serDataSize: Int = endSize - initialSize
+    DataSerializer.writePrimitiveInt(serDataSize, dataOutput)
     hdos.sendTo(dataOutput)
+
+
+
+    /* val hdos: NonVersionedHeapDataOutputStream = new NonVersionedHeapDataOutputStream
+      this.writeSchema(hdos)
+      this.writeData(hdos)
+      hdos.sendTo(dataOutput)
+      */
   }
 
-  @throws[IOException]
-  def toDataWithoutTopSchema(hdos: NonVersionedHeapDataOutputStream) {
-    /*
-    if (ser != null) {
-      hdos.write(ser)
-    }
-    else {
-      this.writeData(hdos)
-      this.ser = hdos.toByteArray
-    }
-    */
-    this.writeData(hdos)
-  }
 
   @throws[IOException]
   private def writeSchema(hdos: DataOutput) {
@@ -85,8 +67,8 @@ class GemFireRow(var schemaCode: Array[Byte],
       numLongs)(hdos.reserveLong)
 
     val bitset = new BitSet(schemaCode.length)
-   // var i: Int = 0
-    0 until deser.length foreach(i => {
+    // var i: Int = 0
+    0 until deser.length foreach (i => {
       val elem: Any = deser(i)
       if (elem != null) {
         bitset += i
@@ -124,7 +106,7 @@ class GemFireRow(var schemaCode: Array[Byte],
         }
       }
     }
-    )
+        )
     bitset.toBitMask.zip(longUpdaters).foreach(tuple => tuple._2.update(tuple._1))
 
   }
@@ -137,6 +119,7 @@ class GemFireRow(var schemaCode: Array[Byte],
     ser = new Array[Byte](dataLength)
     dataInput.readFully(ser)
     */
+    val dataLength: Int = DataSerializer.readPrimitiveInt(dataInput)
     schemaCode = DataSerializer.readByteArray(dataInput)
     this.deser = this.readArrayData(dataInput)
   }
@@ -176,7 +159,7 @@ class GemFireRow(var schemaCode: Array[Byte],
           case SchemaMappings.intt =>
             DataSerializer.readPrimitiveInt(dis)
           case SchemaMappings.longg =>
-           DataSerializer.readPrimitiveLong(dis)
+            DataSerializer.readPrimitiveLong(dis)
           case SchemaMappings.doublee =>
             DataSerializer.readPrimitiveDouble(dis)
           case SchemaMappings.bytee =>

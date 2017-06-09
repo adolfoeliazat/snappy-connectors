@@ -16,6 +16,8 @@
  */
 package io.snappydata.spark.gemfire.connector.javaapi;
 
+import java.util.Map;
+
 import io.snappydata.spark.gemfire.connector.GemFireSQLContextFunctions;
 import org.apache.spark.sql.Dataset;
 import org.apache.spark.sql.SQLContext;
@@ -36,7 +38,7 @@ public class GemFireJavaSQLContextFunctions {
   }
 
   public <T> Dataset gemfireOQL(String query) {
-    Dataset df = scf.gemfireOQL(query);
+    Dataset df = scf.gemfireOQL(query, null);
     return df;
   }
 
