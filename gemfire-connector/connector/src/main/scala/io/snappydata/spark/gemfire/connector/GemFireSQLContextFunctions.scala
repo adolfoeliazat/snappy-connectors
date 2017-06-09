@@ -23,7 +23,7 @@ import io.snappydata.spark.gemfire.connector.internal.oql.OQLRelation
 import io.snappydata.spark.gemfire.connector.internal.rdd.GemFireRegionRDD
 
 import org.apache.spark.Logging
-import org.apache.spark.sql.sources.connector.gemfire.GemFireRelation
+import org.apache.spark.sql.sources.connector.gemfire.{Constants, GemFireRelation}
 import org.apache.spark.sql.{DataFrame, SQLContext}
 
 /**
@@ -45,7 +45,7 @@ class GemFireSQLContextFunctions(@(transient @param) sqlContext: SQLContext) ext
     }
     val options = if (opConf == null) Map.empty[String, String] else opConf
     val rdd = new GemFireRegionRDD[Any, Any, Any](sqlContext.sparkContext,
-      None, computeOQLCreator, options, None, None, None,
+      None, computeOQLCreator, options, None, options.get(Constants.gridNameKey), None,
       Some(query), None)
 
     sqlContext.baseRelationToDataFrame(OQLRelation(rdd)(sqlContext))

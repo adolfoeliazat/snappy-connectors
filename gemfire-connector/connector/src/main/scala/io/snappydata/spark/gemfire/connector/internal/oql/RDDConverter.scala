@@ -23,10 +23,11 @@ import org.apache.spark.sql.{DataFrame, Row, SQLContext}
 
 case class OQLRelation[T](queryRDD: RDD[T])(@transient val sqlContext: SQLContext) extends
     BaseRelation with TableScan {
+  private val scheema = new SchemaBuilder(queryRDD).toSparkSchema()
 
-  override def schema: StructType = new SchemaBuilder(queryRDD).toSparkSchema()
+  override def schema: StructType = scheema
 
-  override def buildScan(): RDD[Row] = new RowBuilder(queryRDD).toRowRDD()
+  override def buildScan(): RDD[Row] = new RowBuilder(queryRDD).toRowRDD(scheema)
 
 }
 

@@ -22,6 +22,8 @@ import com.gemstone.gemfire.cache.query.internal.StructImpl
 
 import org.apache.spark.Logging
 import org.apache.spark.rdd.RDD
+import org.apache.spark.sql.Encoders
+import org.apache.spark.sql.catalyst.encoders.RowEncoder
 import org.apache.spark.sql.types._
 
 class SchemaBuilder[T](queryRDD: RDD[T]) extends Logging {
@@ -52,7 +54,13 @@ class SchemaBuilder[T](queryRDD: RDD[T]) extends Logging {
       case r: StructImpl => constructFromStruct(r)
       case null => StructType(StructField("col1", NullType) :: Nil)
       case default =>
-        val value = typeMap.getOrElse(default.getClass(), nullStructType)
+        val value = typeMap.getOrElse(default.getClass(), {
+          try {
+            Encoders.bean(default.getClass).schema
+          } catch {
+            case e: Exception => nullStructType
+          }
+        })
         StructType(StructField("col1", value) :: Nil)
     }
     logInfo(s"Schema: $tpe")
@@ -68,7 +76,15 @@ class SchemaBuilder[T](queryRDD: RDD[T]) extends Logging {
       val value = values(i)
       val dataType = value match {
         case null => NullType
-        case default => typeMap.getOrElse(default.getClass, nullStructType)
+        case default => {
+          typeMap.getOrElse(default.getClass, {
+            try {
+              Encoders.bean(default.getClass).schema
+            } catch {
+              case e: Exception => nullStructType
+            }
+          })
+        }
       }
       lb += StructField(name, dataType)
     }

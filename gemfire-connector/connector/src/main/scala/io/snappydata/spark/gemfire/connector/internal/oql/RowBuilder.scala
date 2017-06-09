@@ -20,6 +20,7 @@ import com.gemstone.gemfire.cache.query.internal.StructImpl
 
 import org.apache.spark.rdd.RDD
 import org.apache.spark.sql._
+import org.apache.spark.sql.types.StructType
 
 class RowBuilder[T](queryRDD: RDD[T]) {
 
@@ -28,13 +29,42 @@ class RowBuilder[T](queryRDD: RDD[T]) {
     *
     * @return RDD of Rows
     */
-  def toRowRDD(): RDD[Row] = {
+  def toRowRDD(schema: StructType): RDD[Row] = {
     val rowRDD = queryRDD.map(row => {
       row match {
-        case si: StructImpl => Row.fromSeq(si.getFieldValues)
-        case obj: Object => Row.fromSeq(Seq(obj))
+        case si: StructImpl => {
+          val rowData = schema.zip(si.getFieldValues).map{
+            case(structField, elem) => structField.dataType match {
+              case st: StructType => RowBuilder.covertObjectToRow(elem, st)
+              case _ => elem
+            }
+          }
+          Row.fromSeq(rowData)
+        }
+        case obj: Object => {
+          val temp = schema(0).dataType match {
+            case st: StructType => RowBuilder.covertObjectToRow(obj, st)
+            case _ => obj
+          }
+          Row.fromSeq(Seq(temp))
+        }
       }
     })
     rowRDD
+  }
+}
+
+object RowBuilder {
+  def covertObjectToRow(obj: Any, structType: StructType): Row = {
+    val elems = structType.map(field => {
+     val methodName = "get" + field.name.charAt(0).toUpper + field.name.substring(1)
+     val method = obj.getClass.getMethod(methodName)
+     val value = method.invoke(obj)
+     field.dataType match {
+       case st: StructType => covertObjectToRow(value, st)
+       case _ => value
+     }
+  })
+   Row(elems: _*)
   }
 }
