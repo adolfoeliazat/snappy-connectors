@@ -321,6 +321,21 @@ case class GemFireRelation(@transient override val sqlContext: SnappyContext,
         Array(StructField(singleFieldColumnName, dataType, nullable)))
     }
   }
+
+  override def toString: String = {
+    val sb = new StringBuilder
+    sb.append("GemFireRelation(region=").append(regionPath)
+    keyConstraint match {
+      case Some(k) => sb.append(",keyType=").append(k)
+      case _ =>
+    }
+    valueConstraint match {
+      case Some(v) if !v.contains("org.apache.spark.sql.Row") =>
+        sb.append(",valueType=").append(v)
+      case _ =>
+    }
+    sb.append(')').toString()
+  }
 }
 
 object GemFireRelation {
