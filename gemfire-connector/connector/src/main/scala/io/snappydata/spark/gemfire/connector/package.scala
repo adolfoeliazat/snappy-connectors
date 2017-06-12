@@ -42,7 +42,7 @@ package object connector {
   final val ServerSplitsPartitionerName = ServerSplitsPartitioner.name
 
   final val RDDSaveBatchSizePropKey = "rdd.save.batch.size"
-  final val RDDSaveBatchSizeDefault = 10000
+  final val RDDSaveBatchSizeDefault = 5000
 
   /** implicits */
 

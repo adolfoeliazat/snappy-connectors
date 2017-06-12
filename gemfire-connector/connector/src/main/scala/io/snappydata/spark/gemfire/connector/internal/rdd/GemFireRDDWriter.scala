@@ -86,9 +86,12 @@ class GemFirePairRDDWriter[K, V]
     var count = 0
     val chunks = data.grouped(batchSize)
     chunks.foreach { chunk =>
-      val map = chunk.foldLeft(new JMap[K, V]()) { case (m, (k, v)) => m.put(k, v); m }
-      region.putAll(map)
+      val map = chunk.toMap
+      // chunk.foldLeft(new JMap[K, V]()) { case (m, (k, v)) => m.put(k, v); m }
+      import collection.JavaConverters._
+      region.putAll(map.asJava)
       count += chunk.length
+      // Thread.sleep(500)
     }
     logDebug(s"$count entries (batch.batch = $batchSize) are saved to region $regionPath")
   }
