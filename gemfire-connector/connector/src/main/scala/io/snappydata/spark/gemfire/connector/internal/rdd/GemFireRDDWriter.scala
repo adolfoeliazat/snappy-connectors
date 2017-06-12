@@ -91,7 +91,7 @@ class GemFirePairRDDWriter[K, V]
       import collection.JavaConverters._
       region.putAll(map.asJava)
       count += chunk.length
-      // Thread.sleep(500)
+      Thread.sleep(500)
     }
     logDebug(s"$count entries (batch.batch = $batchSize) are saved to region $regionPath")
   }

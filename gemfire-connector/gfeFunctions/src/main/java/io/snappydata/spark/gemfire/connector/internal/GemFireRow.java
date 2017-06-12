@@ -36,9 +36,9 @@ import io.snappydata.spark.gemfire.connector.internal.gemfirefunctions.shared.Sc
 public class GemFireRow implements DataSerializable {
 
   private volatile byte[] schemaCode = null;
-  private volatile WeakReference<Object[]> weakDeser = null;
+  //private volatile WeakReference<Object[]> weakDeser = null;
   private volatile byte[] serData = null;
-  private volatile long[] fieldStartPositions = null;
+  private volatile int[] fieldStartPositions = null;
   private static int ADDRESS_BITS_PER_WORD = 6;
   public static long serialVersionUID = 1362354784026L;
 
@@ -47,12 +47,12 @@ public class GemFireRow implements DataSerializable {
 
   public static GemFireRow create(byte[] schemaCode, Object[] deser) throws IOException {
     NonVersionedHeapDataOutputStream hdos = new NonVersionedHeapDataOutputStream();
-    long[] fieldStartPositions = new long[schemaCode.length];
+    int[] fieldStartPositions = new int[schemaCode.length];
     writeData(hdos, schemaCode, deser, fieldStartPositions);
     return new GemFireRow(schemaCode, hdos.toByteArray(), fieldStartPositions);
   }
 
-  private GemFireRow(byte[] schemaCode, byte[] ser, long[] fieldStartPositions) {
+  private GemFireRow(byte[] schemaCode, byte[] ser, int[] fieldStartPositions) {
     this.schemaCode = schemaCode;
     this.serData = ser;
     this.fieldStartPositions = fieldStartPositions;
@@ -102,7 +102,7 @@ public class GemFireRow implements DataSerializable {
   }
 
   private static void writeData(NonVersionedHeapDataOutputStream hdos, byte[] schemaCode,
-      Object[] deser, long[] fieldStartPositions)
+      Object[] deser, int[] fieldStartPositions)
       throws IOException {
     int numLongs = getNumLongsForBitSet(schemaCode.length);
     NonVersionedHeapDataOutputStream.LongUpdater[] longUpdaters =
@@ -188,9 +188,9 @@ public class GemFireRow implements DataSerializable {
   public void fromData(DataInput dataInput) throws IOException, ClassNotFoundException {
     int dataLength = DataSerializer.readPrimitiveInt(dataInput);
     schemaCode = DataSerializer.readByteArray(dataInput);
-    this.fieldStartPositions = new long[schemaCode.length];
+    this.fieldStartPositions = new int[schemaCode.length];
     for(int i = 0 ; i < schemaCode.length; ++i) {
-      this.fieldStartPositions[i] = dataInput.readLong();
+      this.fieldStartPositions[i] = (int)dataInput.readLong();
     }
     this.serData = new byte[dataLength];
     dataInput.readFully(serData);
@@ -198,6 +198,7 @@ public class GemFireRow implements DataSerializable {
   }
 
   public Object[] getArray() throws IOException, ClassNotFoundException {
+   /*
     if (weakDeser != null) {
       Object[] deser = weakDeser.get();
       if (deser != null) {
@@ -208,13 +209,14 @@ public class GemFireRow implements DataSerializable {
     } else {
       return getAndSetDeser();
     }
-
+    */
+    return getAndSetDeser();
   }
 
   private Object[] getAndSetDeser() throws IOException, ClassNotFoundException {
     DataInputStream dis = new DataInputStream(new ByteArrayInputStream(this.serData));
     Object[] deser = this.readArrayData(dis);
-    this.weakDeser = new WeakReference<Object[]>(deser);
+  //  this.weakDeser = new WeakReference<Object[]>(deser);
     return deser;
   }
 
