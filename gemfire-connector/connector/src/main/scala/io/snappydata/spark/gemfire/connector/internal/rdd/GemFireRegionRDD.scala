@@ -112,22 +112,18 @@ class GemFireRegionRDD[K, V, T]
     md match {
       case None => throw new RuntimeException(s"region $regionPath was not found.")
       case Some(data) =>
-        if (this.isDebugEnabled) {
-          logDebug(
-            s"""RDD  region=$regionPath
-                |conn=${DefaultGemFireConnectionManager.locators.mkString(",")},
-              | env=$opConf""".stripMargin)
-          }
+        logDebug(
+          s"""RDD  region=$regionPath
+              |conn=${DefaultGemFireConnectionManager.locators.mkString(",")},
+            | env=$opConf""".stripMargin)
 
         val p = if (data.isPartitioned) preferredPartitioner(opConf)
         else defaultReplicatedRegionPartitioner
         val splits = p.partitions(conn, data, opConf)
-        if (this.isDebugEnabled) {
-          logDebug(
-            s"""GemFireRegionRDD:: getPartitions:
-             |region=$regionPath partitions=\n  ${splits.mkString("\n  ")}""".
-                stripMargin)
-          }
+        logDebug(
+          s"""GemFireRegionRDD:: getPartitions:
+           |region=$regionPath partitions=\n  ${splits.mkString("\n  ")}""".
+              stripMargin)
         splits
     }
   }
