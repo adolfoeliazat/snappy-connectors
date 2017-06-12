@@ -17,8 +17,8 @@ ClassCastException.
 
 ### Expose GemFire Region Containing Rows ( GemFireRows) As An External Table
 ```
-val externalBsegTable = snc.createExternalTable("bsegInGem",      "org.apache.spark.sql.sources.connector.gemfire.DefaultSource",
-   schema   ,
+val externalBsegTable = snc.createExternalTable("bsegInGem", 
+     "org.apache.spark.sql.sources.connector.gemfire.DefaultSource", schema,
      Map[String, String]("regionPath" -> "bseg1", "valueClass" -> "org.apache.spark.sql.Row"))
 ```     
 A GemFire region which  stores or will store Row objects, can be made avaialble to snappydata as an external table. 
@@ -27,10 +27,10 @@ Here the schema is the StructType defining the fields of the Row object being st
 If the external table should contain Primary Key Column as well as the Row, then the API would be
 
 ```
-val externalBsegTable = snc.createExternalTable("bsegInGem",      "org.apache.spark.sql.sources.connector.gemfire.DefaultSource",
-   keyPlusValueSchema   ,
-     Map[String, String]("regionPath" -> "bseg1", "valueClass" -> "org.apache.spark.sql.Row",
-"keyClass" -> "java.lang.Long"     
+val externalBsegTable = snc.createExternalTable("bsegInGem",
+   "org.apache.spark.sql.sources.connector.gemfire.DefaultSource", keyPlusValueSchema,
+   Map[String, String]("regionPath" -> "bseg1", "valueClass" -> "org.apache.spark.sql.Row",
+   "keyClass" -> "java.lang.Long"     
      ))
 ```
 In the above case, since Key is also intended to be part of the table, the keyPlusValueSchema should include first StructField as the Primary Key Column followed by the Value schema & keyClass should indicate the type of the Primary Key being used to store the Row in GemFire
