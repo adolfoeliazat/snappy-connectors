@@ -23,6 +23,7 @@ import java.io.DataInputStream;
 import java.io.DataOutput;
 import java.io.IOException;
 import java.lang.ref.WeakReference;
+import java.nio.ByteBuffer;
 import java.sql.Date;
 import java.sql.Timestamp;
 import java.util.BitSet;
@@ -37,6 +38,7 @@ public class GemFireRow implements DataSerializable {
   private volatile byte[] schemaCode = null;
   private volatile WeakReference<Object[]> weakDeser = null;
   private volatile byte[] serData = null;
+  private volatile long[] fieldStartPositions = null;
   private static int ADDRESS_BITS_PER_WORD = 6;
   public static long serialVersionUID = 1362354784026L;
 
@@ -45,19 +47,24 @@ public class GemFireRow implements DataSerializable {
 
   public static GemFireRow create(byte[] schemaCode, Object[] deser) throws IOException {
     NonVersionedHeapDataOutputStream hdos = new NonVersionedHeapDataOutputStream();
-    writeData(hdos, schemaCode, deser);
-    return new GemFireRow(schemaCode, hdos.toByteArray());
+    long[] fieldStartPositions = new long[schemaCode.length];
+    writeData(hdos, schemaCode, deser, fieldStartPositions);
+    return new GemFireRow(schemaCode, hdos.toByteArray(), fieldStartPositions);
   }
 
-  private GemFireRow(byte[] schemaCode, byte[] ser) {
+  private GemFireRow(byte[] schemaCode, byte[] ser, long[] fieldStartPositions) {
     this.schemaCode = schemaCode;
     this.serData = ser;
+    this.fieldStartPositions = fieldStartPositions;
   }
 
   @Override
   public void toData(DataOutput dataOutput) throws IOException {
     DataSerializer.writePrimitiveInt(serData.length, dataOutput);
     this.writeSchema(dataOutput);
+    for (int i =0 ; i < schemaCode.length; ++i) {
+      dataOutput.writeLong(fieldStartPositions[i]);
+    }
     dataOutput.write(serData);
     /*
       NonVersionedHeapDataOutputStream hdos = new NonVersionedHeapDataOutputStream();
@@ -94,7 +101,8 @@ public class GemFireRow implements DataSerializable {
     DataSerializer.writeByteArray(schemaCode, hdos);
   }
 
-  private static void writeData(NonVersionedHeapDataOutputStream hdos, byte[] schemaCode, Object[] deser)
+  private static void writeData(NonVersionedHeapDataOutputStream hdos, byte[] schemaCode,
+      Object[] deser, long[] fieldStartPositions)
       throws IOException {
     int numLongs = getNumLongsForBitSet(schemaCode.length);
     NonVersionedHeapDataOutputStream.LongUpdater[] longUpdaters =
@@ -107,6 +115,7 @@ public class GemFireRow implements DataSerializable {
     for (int i = 0; i < deser.length; ++i) {
       Object elem = deser[i];
       if (elem != null) {
+        fieldStartPositions[i] = hdos.size();
         bitset.set(i);
         switch (schemaCode[i]) {
           case SchemaMappings.stringg:
@@ -163,6 +172,8 @@ public class GemFireRow implements DataSerializable {
           }
 
         }
+      } else {
+        fieldStartPositions[i] = 0;
       }
 
     }
@@ -177,6 +188,10 @@ public class GemFireRow implements DataSerializable {
   public void fromData(DataInput dataInput) throws IOException, ClassNotFoundException {
     int dataLength = DataSerializer.readPrimitiveInt(dataInput);
     schemaCode = DataSerializer.readByteArray(dataInput);
+    this.fieldStartPositions = new long[schemaCode.length];
+    for(int i = 0 ; i < schemaCode.length; ++i) {
+      this.fieldStartPositions[i] = dataInput.readLong();
+    }
     this.serData = new byte[dataLength];
     dataInput.readFully(serData);
     //this.deser = this.readArrayData(dataInput);
@@ -204,7 +219,17 @@ public class GemFireRow implements DataSerializable {
   }
 
   public Object get(int pos) throws IOException, ClassNotFoundException {
-    return getArray()[pos];
+    //return getArray()[pos];
+    int fieldStartPosition = (int)this.fieldStartPositions[pos];
+    if (fieldStartPosition == 0) {
+      return null;
+    }
+    byte dataType = schemaCode[pos];
+    // set the buffer to offset = fieldStart position
+    DataInputStream dis  = new DataInputStream( new ByteArrayInputStream(serData, fieldStartPosition, serData.length -
+        fieldStartPosition));
+    return readForDataType(dataType, dis);
+
 
   }
 
@@ -219,61 +244,64 @@ public class GemFireRow implements DataSerializable {
     Object[] deserialzed = new Object[schemaCode.length];
     for (int i = 0; i < schemaCode.length; ++i) {
       if (bitset.get(i)) {
-        switch (schemaCode[i]) {
-          case SchemaMappings.stringg:
-            deserialzed[i] = DataSerializer.readString(dis);
-            break;
-          case SchemaMappings.shortt:
-            deserialzed[i] = Short.valueOf(DataSerializer.readPrimitiveShort(dis));
-            break;
-          case SchemaMappings.intt:
-            deserialzed[i] = Integer.valueOf(DataSerializer.readPrimitiveInt(dis));
-            break;
-          case SchemaMappings.longg:
-            deserialzed[i] = Long.valueOf(DataSerializer.readPrimitiveLong(dis));
-            break;
-          case SchemaMappings.doublee:
-            deserialzed[i] = Double.valueOf(DataSerializer.readPrimitiveDouble(dis));
-            break;
-          case SchemaMappings.bytee:
-            deserialzed[i] = Byte.valueOf(DataSerializer.readPrimitiveByte(dis));
-            break;
-          case SchemaMappings.floatt:
-            deserialzed[i] = Float.valueOf(DataSerializer.readPrimitiveFloat(dis));
-            break;
-          case SchemaMappings.binary:
-            deserialzed[i] = DataSerializer.readByteArray(dis);
-            break;
-          case SchemaMappings.booll:
-            deserialzed[i] = Boolean.valueOf(DataSerializer.readPrimitiveBoolean(dis));
-            break;
-          case SchemaMappings.datee: {
-            long time = DataSerializer.readPrimitiveLong(dis);
-            deserialzed[i] = new java.sql.Date(time);
-            break;
-          }
-          case SchemaMappings.timestampp: {
-            long time = DataSerializer.readPrimitiveLong(dis);
-            int nano = DataSerializer.readPrimitiveInt(dis);
-            Timestamp ts = new Timestamp(time);
-            ts.setNanos(nano);
-            deserialzed[i] = ts;
-            break;
-          }
-          case SchemaMappings.structtypee: {
-            GemFireRow gfRow = new GemFireRow();
-            gfRow.fromData(dis);
-            deserialzed[i] = gfRow;
-            break;
-          }
-          case SchemaMappings.unoptimizedtype:
-            deserialzed[i] = DataSerializer.readObject(dis);
-            break;
-        }
+        deserialzed[i] = readForDataType(schemaCode[i], dis);
       }
     }
 
     return deserialzed;
+  }
+
+  private Object readForDataType(byte dataType, DataInput dis) throws  IOException, ClassNotFoundException {
+
+    switch (dataType) {
+      case SchemaMappings.stringg:
+        return DataSerializer.readString(dis);
+      case SchemaMappings.shortt:
+        return Short.valueOf(DataSerializer.readPrimitiveShort(dis));
+      case SchemaMappings.intt:
+        return Integer.valueOf(DataSerializer.readPrimitiveInt(dis));
+      case SchemaMappings.longg:
+        return Long.valueOf(DataSerializer.readPrimitiveLong(dis));
+
+      case SchemaMappings.doublee:
+        return Double.valueOf(DataSerializer.readPrimitiveDouble(dis));
+
+      case SchemaMappings.bytee:
+        return Byte.valueOf(DataSerializer.readPrimitiveByte(dis));
+
+      case SchemaMappings.floatt:
+        return Float.valueOf(DataSerializer.readPrimitiveFloat(dis));
+
+      case SchemaMappings.binary:
+        return DataSerializer.readByteArray(dis);
+
+      case SchemaMappings.booll:
+        return Boolean.valueOf(DataSerializer.readPrimitiveBoolean(dis));
+
+      case SchemaMappings.datee: {
+        long time = DataSerializer.readPrimitiveLong(dis);
+        return new java.sql.Date(time);
+
+      }
+      case SchemaMappings.timestampp: {
+        long time = DataSerializer.readPrimitiveLong(dis);
+        int nano = DataSerializer.readPrimitiveInt(dis);
+        Timestamp ts = new Timestamp(time);
+        ts.setNanos(nano);
+        return ts;
+
+      }
+      case SchemaMappings.structtypee: {
+        GemFireRow gfRow = new GemFireRow();
+        gfRow.fromData(dis);
+        return gfRow;
+
+      }
+      case SchemaMappings.unoptimizedtype:
+        return DataSerializer.readObject(dis);
+
+    }
+    return null;
   }
 
   public static int getNumLongsForBitSet(int nbits) {
