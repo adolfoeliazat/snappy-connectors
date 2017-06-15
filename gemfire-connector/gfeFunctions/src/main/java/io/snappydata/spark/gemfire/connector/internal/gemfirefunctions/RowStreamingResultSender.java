@@ -34,7 +34,7 @@ public class RowStreamingResultSender<T>  extends ConnectionStreamingResultSende
 
   @Override
   protected void serializeValue(Object value, NonVersionedHeapDataOutputStream buf) throws IOException {
-    ((GemFireRow)value).toDataWithoutTopSchema(buf);
+    ((GemFireRow)value).toDataWithoutTopSchemaAndFieldPositions(buf);
   }
 
 

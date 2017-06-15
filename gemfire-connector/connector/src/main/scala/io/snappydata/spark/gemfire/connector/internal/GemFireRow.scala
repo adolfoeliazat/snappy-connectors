@@ -22,7 +22,8 @@ import java.sql.{Date, Timestamp}
 import scala.collection.mutable.BitSet
 
 import com.gemstone.gemfire.{DataSerializable, DataSerializer}
-import io.snappydata.spark.gemfire.connector.internal.gemfirefunctions.shared.{NonVersionedHeapDataOutputStream, SchemaMappings, Utils}
+import io.snappydata.spark.gemfire.connector.internal.gemfirefunctions.shared.{NonVersionedHeapDataOutputStream,
+SchemaMappings}
 
 /*
 Because OQL Row serializer is sensitive to readArray WriteArray methods, the data start positions long array
@@ -33,7 +34,7 @@ the array data without top schema & field start positions, in which case bitmask
 but we need to avoid redundant data sending
 
 new data format :
-total length (int) ( schema length + schema bytes + start field pos longs + array data start ,
+total length (int) ( schema length + schema bytes +  array data start + start field pos longs )
  */
 @SerialVersionUID(1362354784026L)
 class GemFireRow(var schemaCode: Array[Byte],
@@ -49,20 +50,22 @@ class GemFireRow(var schemaCode: Array[Byte],
   def toData(dataOutput: DataOutput) {
     val hdos: NonVersionedHeapDataOutputStream = new NonVersionedHeapDataOutputStream
     this.writeSchema(hdos)
-    val dataStartPositions = this.reserveDataPositions(hdos)
+    // val dataStartPositions = this.reserveDataPositions(hdos)
 
-    this.writeData(hdos, dataStartPositions)
+    this.writeDataWithFieldStartPosAppended(hdos)
 
     DataSerializer.writePrimitiveInt(hdos.size(), dataOutput)
     hdos.sendTo(dataOutput)
 
   }
 
+  /*
   private def reserveDataPositions(hdos: NonVersionedHeapDataOutputStream):
   Seq[NonVersionedHeapDataOutputStream.LongUpdater] = {
     val num = Utils.getNumberOfPositionsForFieldAddress(schemaCode.length)
     for (i <- 0 until num) yield hdos.reserveLong()
   }
+  */
 
 
 
@@ -75,20 +78,17 @@ class GemFireRow(var schemaCode: Array[Byte],
   }
 
   @throws[IOException]
-  private def writeData(hdos: NonVersionedHeapDataOutputStream,
-      dataStartPositions: Seq[NonVersionedHeapDataOutputStream.LongUpdater]) {
+  private def writeDataWithFieldStartPosAppended(hdos: NonVersionedHeapDataOutputStream) {
     val numLongs: Int = GemFireRow.getNumLongsForBitSet(schemaCode.length)
     val longUpdaters = Array.fill[NonVersionedHeapDataOutputStream.LongUpdater](
       numLongs)(hdos.reserveLong)
-
+    var fieldStartPosition = 0
     val bitset = new BitSet(schemaCode.length)
-    // var i: Int = 0
-    val evenOddParts = Array.ofDim[Int](2)
-    0 until deser.length foreach (i => {
+    val fieldStartPositions = for (i <- 0 until deser.length) yield {
       val elem: Any = deser(i)
       if (elem != null) {
         bitset += i
-        evenOddParts(i % 2) = hdos.size()
+       val fieldStartPosition = hdos.size()
         // dataStartPositions(i).update(hdos.size())
         schemaCode(i) match {
           case SchemaMappings.stringg =>
@@ -122,21 +122,16 @@ class GemFireRow(var schemaCode: Array[Byte],
             DataSerializer.writeObject(elem, hdos)
           }
         }
+        fieldStartPosition
       } else {
-        evenOddParts(i % 2) = 0
+        0
       }
-      if (i % 2 != 0) {
-        val posToSet = (i - 1) / 2
-        dataStartPositions(posToSet).update(Utils.
-            setOddPositionAddressAndGetFinalLong(evenOddParts(0), evenOddParts(1)))
-      }
-    }
-        )
-    if (schemaCode.length % 2 != 0) {
-      dataStartPositions(dataStartPositions.length - 1).update(evenOddParts(0))
+
     }
     bitset.toBitMask.zip(longUpdaters).foreach(tuple => tuple._2.update(tuple._1))
-
+    fieldStartPositions.foreach(pos => if (pos != 0) {
+      hdos.writeInt(pos)
+    })
   }
 
   @throws[IOException]
@@ -153,15 +148,15 @@ class GemFireRow(var schemaCode: Array[Byte],
     val schemaCodeLength = dataInput.readInt();
     schemaCode = Array.ofDim[Byte](schemaCodeLength)
     dataInput.readFully(schemaCode)
+
+    this.deser = this.readArrayData(dataInput)
+
     // consume the data start positions .
     // we do not need the array positions I suppose in connector VM
     // if we think we need it , we will store it
-    val numFieldAddresses = Utils.getNumberOfPositionsForFieldAddress(schemaCode.length)
-    for(i <- 0 until numFieldAddresses ) {
-      dataInput.readLong()
-    }
+    // ignore the field start positions at the end of data , they for now
+    // are not needed to be read
 
-    this.deser = this.readArrayData(dataInput)
   }
 
   @throws[IOException]
@@ -234,7 +229,14 @@ class GemFireRow(var schemaCode: Array[Byte],
     }
     )
 
-    return deserialzed
+    // consume all not null positions
+    0 until schemaCode.length foreach {
+      i => if (bitset(i)) {
+        dis.readInt
+      }
+    }
+
+    deserialzed
   }
 }
 

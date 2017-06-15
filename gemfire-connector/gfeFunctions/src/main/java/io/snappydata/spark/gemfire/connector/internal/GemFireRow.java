@@ -22,7 +22,6 @@ import java.io.DataInput;
 import java.io.DataInputStream;
 import java.io.DataOutput;
 import java.io.IOException;
-import java.lang.ref.WeakReference;
 import java.nio.ByteBuffer;
 import java.sql.Date;
 import java.sql.Timestamp;
@@ -32,7 +31,6 @@ import com.gemstone.gemfire.DataSerializable;
 import com.gemstone.gemfire.DataSerializer;
 import io.snappydata.spark.gemfire.connector.internal.gemfirefunctions.shared.NonVersionedHeapDataOutputStream;
 import io.snappydata.spark.gemfire.connector.internal.gemfirefunctions.shared.SchemaMappings;
-import io.snappydata.spark.gemfire.connector.internal.gemfirefunctions.shared.Utils;
 
 public class GemFireRow implements DataSerializable {
 
@@ -48,11 +46,8 @@ public class GemFireRow implements DataSerializable {
     NonVersionedHeapDataOutputStream hdos = new NonVersionedHeapDataOutputStream();
 
     writeSchema(hdos, schemaCode);
-    int numFieldPositions = Utils.getNumberOfPositionsForFieldAddress(schemaCode.length);
-    NonVersionedHeapDataOutputStream.LongUpdater[] fieldStartPositions =
-        reserveDataPositions(hdos, numFieldPositions);
 
-    writeData(hdos, schemaCode, deser, fieldStartPositions);
+    writeDataWithFieldStartPositionsAppended(hdos, schemaCode, deser);
     return new GemFireRow(hdos.toByteArray());
   }
 
@@ -77,26 +72,39 @@ public class GemFireRow implements DataSerializable {
 
   }
 
-  private int skipLengthForArrayData() {
+  private int startPositionForArrayData() {
     ByteBuffer buffer = ByteBuffer.wrap(this.serializedBytes);
     int schemaLength = buffer.getInt();
-    int bytesToSkip = 4 ; //schema length
-    bytesToSkip += schemaLength;
-    bytesToSkip += Utils.getNumberOfPositionsForFieldAddress(schemaLength) * 8;
-    return bytesToSkip;
+    int startPosOfArrayData = 4 ; //schema length
+    startPosOfArrayData += schemaLength;
+    return startPosOfArrayData;
   }
 
-  public void toDataWithoutTopSchema(NonVersionedHeapDataOutputStream hdos) throws IOException {
-    int bytesToSkip = skipLengthForArrayData();
-    hdos.write(this.serializedBytes, bytesToSkip, this.serializedBytes.length - bytesToSkip);
-    /*
-    if (ser != null) {
-      hdos.write(ser);
-    } else {
-    */
-    //this.writeData(hdos);
-    // this.ser = hdos.toByteArray();
-    //}
+  private int lengthOfArrayData(int startPositionOfArrayData) {
+    int schemaLength = startPositionOfArrayData - 4 ; // subtract the 4 bytes used to write schema length to get
+    // schema length
+    ByteBuffer buffer = ByteBuffer.wrap(this.serializedBytes);
+    buffer.position(startPositionOfArrayData);
+    // find the total not null cols
+    int numLongs = getNumLongsForBitSet(schemaLength);
+    long[] masks = new long[numLongs];
+    for (int i = 0; i < numLongs; ++i) {
+      masks[i] = buffer.getLong();
+    }
+    BitSet bitset = BitSet.valueOf(masks);
+    int numStartPositionsAppended = bitset.cardinality();
+    int arrayDataLength = this.serializedBytes.length - startPositionOfArrayData - 4 * numStartPositionsAppended;
+    return arrayDataLength;
+
+  }
+
+
+
+  public void toDataWithoutTopSchemaAndFieldPositions(NonVersionedHeapDataOutputStream hdos) throws IOException {
+    int startPosForArrayData = startPositionForArrayData();
+    int arrayDataLen = lengthOfArrayData(startPosForArrayData);
+    hdos.write(this.serializedBytes, startPosForArrayData, arrayDataLen);
+
   }
 
   private static void writeSchema(DataOutput hdos, byte[] schema) throws IOException {
@@ -105,18 +113,10 @@ public class GemFireRow implements DataSerializable {
     hdos.write(schema);
   }
 
-  private static NonVersionedHeapDataOutputStream.LongUpdater[] reserveDataPositions(
-      NonVersionedHeapDataOutputStream hdos, int schemaLength  ) {
-    NonVersionedHeapDataOutputStream.LongUpdater[] longUpdaters =
-        new NonVersionedHeapDataOutputStream.LongUpdater[schemaLength];
-    for (int i = 0; i < schemaLength; ++i) {
-      longUpdaters[i] = hdos.reserveLong();
-    }
-    return  longUpdaters;
-  }
 
-  private static void writeData(NonVersionedHeapDataOutputStream hdos, byte[] schemaCode,
-      Object[] deser, NonVersionedHeapDataOutputStream.LongUpdater[] fieldStartPositions)
+
+  private static void writeDataWithFieldStartPositionsAppended(NonVersionedHeapDataOutputStream hdos,
+      byte[] schemaCode,  Object[] deser)
       throws IOException {
     int numLongs = getNumLongsForBitSet(schemaCode.length);
     NonVersionedHeapDataOutputStream.LongUpdater[] longUpdaters =
@@ -124,13 +124,12 @@ public class GemFireRow implements DataSerializable {
     for (int i = 0; i < numLongs; ++i) {
       longUpdaters[i] = hdos.reserveLong();
     }
-    int[] evenOddParts = new int[2];
+    int[] fieldStartPositions = new int[schemaCode.length];
     BitSet bitset = new BitSet(schemaCode.length);
     for (int i = 0; i < deser.length; ++i) {
       Object elem = deser[i];
       if (elem != null) {
-        evenOddParts[i % 2] = hdos.size();
-        fieldStartPositions[i].update(hdos.size());
+        fieldStartPositions[i] = hdos.size();
         bitset.set(i);
         switch (schemaCode[i]) {
           case SchemaMappings.stringg:
@@ -188,22 +187,17 @@ public class GemFireRow implements DataSerializable {
 
         }
       } else {
-        evenOddParts[i % 2] = hdos.size();
+        fieldStartPositions[i] = 0;
       }
-
-      if (i % 2 != 0) {
-        int posToSet = (i - 1) / 2;
-        fieldStartPositions[posToSet].update(Utils.
-            setOddPositionAddressAndGetFinalLong(evenOddParts[0], evenOddParts[1]));
-      }
-    }
-
-    if (schemaCode.length % 2 != 0) {
-      fieldStartPositions[fieldStartPositions.length - 1].update(evenOddParts[0]);
     }
     long[] masks = bitset.toLongArray();
     for (int i = 0; i < numLongs; ++i) {
       longUpdaters[i].update(masks[i]);
+    }
+    for (int pos : fieldStartPositions ) {
+      if (pos != 0) {
+        hdos.writeInt(pos);
+      }
     }
   }
 
@@ -225,54 +219,48 @@ public class GemFireRow implements DataSerializable {
   }
 
   public Object[] getArray() throws IOException, ClassNotFoundException {
-   /*
-    if (weakDeser != null) {
-      Object[] deser = weakDeser.get();
-      if (deser != null) {
-        return deser;
-      } else {
-        return getAndSetDeser();
-      }
-    } else {
-      return getAndSetDeser();
-    }
-    */
-    return getAndSetDeser();
-  }
-
-  private Object[] getAndSetDeser() throws IOException, ClassNotFoundException {
     DataInputStream dis = new DataInputStream(new ByteArrayInputStream(this.serializedBytes));
     int schemaLen = dis.readInt();
     byte[] schemaCode = new byte[schemaLen];
     dis.readFully(schemaCode);
-    dis.skipBytes(Utils.getNumberOfPositionsForFieldAddress(schemaLen) * 8 );
     Object[] deser = this.readArrayData(dis, schemaCode);
-  //  this.weakDeser = new WeakReference<Object[]>(deser);
     return deser;
   }
 
+
   public Object get(int pos) throws IOException, ClassNotFoundException {
-    //return getArray()[pos];
+
     byte dataType = this.serializedBytes[4 + pos];
     DataInputStream dis  = new DataInputStream(new ByteArrayInputStream(this.serializedBytes));
     dis.mark(this.serializedBytes.length);
     int schemaLength = dis.readInt();
     dis.skipBytes(schemaLength);
-    int addressPosition = 0;
-    if (pos % 2 > 0) {
-      addressPosition = (pos -1) / 2;
-    } else {
-      addressPosition = pos / 2;
+
+    int numLongs = getNumLongsForBitSet(schemaLength);
+    long[] masks = new long[numLongs];
+    for (int i = 0; i < numLongs; ++i) {
+      masks[i] = dis.readLong();
     }
-    dis.skipBytes(addressPosition * 8);
-    long combinedFieldStartPos = dis.readLong();
-    int fieldStartPos = Utils.getPartAddress(combinedFieldStartPos, pos % 2 == 0);
-    if (fieldStartPos == 0) {
+    BitSet bitset = BitSet.valueOf(masks);
+
+    if (!bitset.get(pos)) {
       return null;
+    } else {
+      int totalNotNullColsFromPos = 0;
+      for (int i = pos ; i < schemaLength; ++i) {
+        if (bitset.get(i)) {
+          ++totalNotNullColsFromPos;
+        }
+      }
+      int addressLocation = this.serializedBytes.length - totalNotNullColsFromPos * 4;
+      dis.reset();
+      dis.skipBytes(addressLocation);
+      int address = dis.readInt();
+      dis.reset();
+      dis.skipBytes(address);
+      return readForDataType(dataType, dis);
     }
-    dis.reset();
-    dis.skipBytes(fieldStartPos);
-    return readForDataType(dataType, dis);
+
 
 
   }
